@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Weather Then</title>
+  <meta name="description" content="Look up the weather for any place on any day since 1836, from yesterday back to the 19th century.">
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <canvas id="map" aria-label="Weather map: temperature colours and sea-level pressure isobars. Click a spot to see its weather."></canvas>
+
+  <div class="left-col">
+    <header class="panel title-card">
+      <h1>Weather Then</h1>
+      <p id="date-long" class="date-long" aria-live="polite">&nbsp;</p>
+      <div class="search">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input id="place-search" type="search" placeholder="Search a place" autocomplete="off" spellcheck="false"
+          role="combobox" aria-expanded="false" aria-controls="place-results" aria-autocomplete="list" aria-label="Search for a place">
+        <ul id="place-results" class="results" role="listbox" hidden></ul>
+      </div>
+    </header>
+
+    <aside id="report" class="panel report" hidden aria-label="Weather for the chosen place">
+      <button id="report-close" type="button" class="close" aria-label="Close the place report">×</button>
+      <div id="report-body"></div>
+    </aside>
+  </div>
+
+  <div id="welcome" class="panel welcome" hidden>
+    <h2>What was the weather the day you were born?</h2>
+    <p>Pick a date, then a place. Any day from 1836 to today works.</p>
+    <div class="welcome-row">
+      <input id="welcome-date" type="date" aria-label="Date">
+      <button id="welcome-go" type="button" class="primary">Next: choose a place</button>
+    </div>
+    <button id="welcome-skip" type="button" class="link">Or explore the Great Blizzard of 1888</button>
+  </div>
+
+  <p id="notice" class="notice" hidden></p>
+
+  <details id="legend" class="panel legend" open>
+    <summary>Map key</summary>
+    <div class="legend-body">
+      <div class="layer-switch" role="radiogroup" aria-label="Map colours">
+        <label><input type="radio" name="layer" value="temp" checked><span>Temperature</span></label>
+        <label><input type="radio" name="layer" value="precip"><span>Rain &amp; snow</span></label>
+      </div>
+      <div class="legend-head">
+        <span id="legend-title">Daily average, 2 m above ground</span>
+        <select id="units" aria-label="Units">
+          <option value="C">°C, mm</option>
+          <option value="F">°F, in</option>
+        </select>
+      </div>
+      <div id="legend-temp">
+        <canvas id="legend-bar" width="220" height="12"></canvas>
+        <div id="legend-ticks" class="legend-ticks"></div>
+      </div>
+      <div id="legend-precip" hidden>
+        <div class="precip-row"><span>Rain</span><canvas id="legend-rain" width="180" height="10"></canvas></div>
+        <div class="precip-row"><span>Snow</span><canvas id="legend-snow" width="180" height="10"></canvas></div>
+        <div class="precip-row"><span>Ice</span><canvas id="legend-frz" width="180" height="10"></canvas></div>
+        <div id="legend-precip-ticks" class="legend-ticks precip-ticks"></div>
+      </div>
+
+      <p class="legend-note"><svg width="28" height="10" aria-hidden="true"><path d="M1 7 Q8 1 14 5 T27 3" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="3.4"/><path d="M1 7 Q8 1 14 5 T27 3" fill="none" stroke="#111" stroke-width="1.4"/></svg>
+        Isobars every 4 hPa, bold every 20. <b class="hl-l">L</b> and <b class="hl-h">H</b> mark pressure centres.</p>
+
+      <label class="toggle">
+        <input id="uncertainty" type="checkbox">
+        <span>Show uncertainty</span>
+      </label>
+      <p id="veil-key" class="legend-note" hidden>Darker areas are where the 80 runs of the reconstruction disagree, mostly where few ships or stations reported. Clear: under 2 hPa of spread. Darkest: 10 hPa or more.</p>
+
+      <div id="events-wrap">
+        <h2>Famous days</h2>
+        <ul id="events" class="events"></ul>
+      </div>
+    </div>
+  </details>
+
+  <div class="panel controls" role="group" aria-label="Date">
+    <button id="prev" type="button" title="Previous day (←)" aria-label="Previous day">‹</button>
+    <button id="play" type="button" title="Play (space)" aria-label="Play" aria-pressed="false">▶</button>
+    <button id="next" type="button" title="Next day (→)" aria-label="Next day">›</button>
+    <input id="slider" type="range" min="0" max="365" value="0" aria-label="Day of the year">
+    <input id="date-input" type="date" aria-label="Choose a date">
+    <button id="reset" type="button" title="Reset the view" aria-label="Reset the view">⤢</button>
+  </div>
+
+  <footer class="credits">
+    Map: <a id="map-credit" href="https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html" target="_blank" rel="noopener">20CRv3</a>
+    · Place weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open‑Meteo</a>, <a href="https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily" target="_blank" rel="noopener">NOAA GHCN‑Daily</a>
+    · <button id="about-open" type="button" class="link">About</button>
+  </footer>
+
+  <div id="tip" class="tip" hidden></div>
+  <div id="status" class="status" role="status" hidden></div>
+
+  <dialog id="about" aria-labelledby="about-title">
+    <h2 id="about-title">About this site</h2>
+    <p>Search for a place, or click the map, to see the weather there on any day from 1836 to today. The report combines two kinds of source:</p>
+    <ul>
+      <li><b>Weather models.</b> From 1940 on, ERA5 (a reconstruction of the global weather by the European Centre for Medium-Range Weather Forecasts) gives conditions, highs and lows, rain, snow, sunshine and wind, hour by hour. For the last few months it uses recent weather-model data, so yesterday and last week are covered.</li>
+      <li><b>Station records.</b> What thermometers and rain gauges at nearby weather stations actually recorded, from NOAA’s Global Historical Climatology Network. Some stations go back to the early 1800s.</li>
+    </ul>
+    <p>The map shows the <b>20th Century Reanalysis</b> (version 3), led by NOAA and the University of Colorado. It feeds historical surface-pressure readings from stations and ships into a modern weather model and rebuilds the atmosphere every 3 hours back to 1836. Colours are the day’s average temperature 2 metres above the ground. The lines are isobars: lines of equal air pressure at sea level, ringing lows (L), which bring storms, and highs (H), which bring settled weather.</p>
+    <p>The reconstruction is run 80 times with small differences. Where the runs agree, the map is well supported by observations; where they disagree, often over the southern oceans in the 1800s, it is an educated guess. Turn on <i>Show uncertainty</i> to see where. Coastlines are modern, and there are no country borders because many have changed since.</p>
+    <p class="small">Privacy: place searches and the place and date you look up are sent to Open-Meteo and NOAA to fetch the weather. Nothing else is collected.</p>
+    <p class="small">Data: NOAA-CIRES-DOE 20th Century Reanalysis V3, provided by NOAA PSL, Boulder, Colorado, USA (CC BY 4.0; Slivinski et al. 2019, <i>Q. J. R. Meteorol. Soc.</i> 145, 2876–2908). Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0), including ERA5 from Copernicus/ECMWF. Station records: NOAA NCEI GHCN-Daily. Place names: GeoNames via Open-Meteo. Coastlines: Natural Earth.</p>
+    <p class="small">Who made this: Carter Pribis came up with the project, chose the data and directed the design. The code (data pipeline and this site) was written by Claude Code, Anthropic’s AI coding assistant, working with Carter.</p>
+    <button id="about-close" type="button">Close</button>
+  </dialog>
+</body>
+</html>

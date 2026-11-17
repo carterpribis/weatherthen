@@ -1,0 +1,12 @@
+# Cloudflare Pages response headers.
+# Code and page: always revalidate, so visitors get new versions right away.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+/js/*
+  Cache-Control: public, max-age=0, must-revalidate
+/style.css
+  Cache-Control: public, max-age=0, must-revalidate
+/events.json
+  Cache-Control: public, max-age=300

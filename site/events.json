@@ -1,0 +1,14 @@
+[
+  {
+    "date": "1888-01-12",
+    "title": "The Children's Blizzard",
+    "place": "Great Plains, USA",
+    "view": { "lon": -98, "lat": 43, "zoom": 4 }
+  },
+  {
+    "date": "1888-03-12",
+    "title": "Great Blizzard of 1888",
+    "place": "US East Coast",
+    "view": { "lon": -73, "lat": 41, "zoom": 4 }
+  }
+]

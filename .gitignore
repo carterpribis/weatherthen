@@ -1,0 +1,10 @@
+.venv/
+data/raw/
+__pycache__/
+.DS_Store
+data/backfill*
+data/check/
+data/out/
+site/data/
+BRIEF.md
+.wrangler/
