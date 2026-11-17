@@ -11,7 +11,7 @@ A map (temperature, pressure, rain and snow) for every day from 1 January 1836 t
 | Dates | Source | Why | Arrives |
 |---|---|---|---|
 | 1836–2015 | **NOAA 20CRv3** (what 1888 uses now) | Same pipeline, same fields, includes the uncertainty spread | One-time backfill |
-| 2016 → 5 days ago | **ERA5 / ERA5T** daily statistics (Copernicus) | Best modern reanalysis; ERA5T is published 5 days behind real time | Backfill, then daily |
+| 2016 → 5 days ago | **ERA5 / ERA5T** hourly data (Copernicus), daily values computed locally | Best modern reanalysis; ERA5T is published 5 days behind real time. (The ready-made daily-statistics product queued for hours, so we switched.) | Backfill one request at a time, then daily |
 | Last 4–5 days | **NOAA GFS analyses** (NOMADS, about 7–10 days kept) | Fills the ERA5T gap so yesterday has a map; marked "preliminary" | Daily, replaced by ERA5 when it arrives |
 
 All three are converted to the same 1° grid and the same field ids (`prmsl`, `t2m`, `tmax`, `precip`, `snow_frac`…). The front end decodes them the same way.
