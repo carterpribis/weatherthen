@@ -40,7 +40,14 @@ FILES = {
     "uwnd.10m.nc":      "Dailies/10m{s}/uwnd.10m.{y}.nc",
     "vwnd.10m.nc":      "Dailies/10m{s}/vwnd.10m.{y}.nc",
     "snod.nc":          "Dailies/accums{s}/snod.{y}.nc",
+    # uncertainty (ensemble spread) for the place report's highs, lows and precipitation
+    "tmax.2m.spread.nc": "spreads/Dailies/2m{s}/tmax.2m.{y}.nc",
+    "tmin.2m.spread.nc": "spreads/Dailies/2m{s}/tmin.2m.{y}.nc",
+    "apcp.spread.nc":    "spreads/Dailies/accums{s}/apcp.{y}.nc",
 }
+
+# Files needed for the uncertainty layer only (years built before it existed).
+SPREAD_FILES = ["tmax.2m.spread.nc", "tmin.2m.spread.nc", "apcp.spread.nc"]
 
 
 def url_for(name: str, year: int) -> str:
@@ -80,14 +87,14 @@ def download(url: str, dest: Path, retries: int = 4) -> int:
     raise RuntimeError(f"{url}: {err}")
 
 
-def fetch_year(year: int, jobs: int = 4, log=print) -> Path:
+def fetch_year(year: int, jobs: int = 4, log=print, only: list[str] | None = None) -> Path:
     if not FIRST_YEAR <= year <= LAST_YEAR:
         raise ValueError(f"20CRv3 covers {FIRST_YEAR}-{LAST_YEAR}")
     out = RAW / str(year)
     out.mkdir(parents=True, exist_ok=True)
     start, total = time.time(), 0
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = {pool.submit(download, url_for(n, year), out / n): n for n in FILES}
+        futures = {pool.submit(download, url_for(n, year), out / n): n for n in (only or FILES)}
         for fut in as_completed(futures):
             total += fut.result()  # re-raises download errors
     secs = time.time() - start

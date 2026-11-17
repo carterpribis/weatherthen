@@ -94,6 +94,23 @@ DETAIL_FIELDS = [
          name="Snow depth on the ground (land only)"),
 ]
 
+# Uncertainty for the place report: ensemble spread (standard deviation of the 80 runs).
+# Highs and lows: spread of each run's daily max/min. Precipitation: the files give the
+# spread of each 3-hour amount (averaged over the day); for the daily total it is scaled
+# by sqrt(8), i.e. treating the eight 3-hour errors as independent (a middle estimate
+# between perfectly correlated, x8, and a single period, x1).
+UNCERTAINTY_FIELDS = [
+    dict(id="tmax_spread", file="tmax.2m.spread.nc", var="tmax",
+         convert=lambda k: k, units="°C", scale=0.1, offset=0.0,
+         name="Daily maximum 2 m temperature (ensemble spread)"),
+    dict(id="tmin_spread", file="tmin.2m.spread.nc", var="tmin",
+         convert=lambda k: k, units="°C", scale=0.1, offset=0.0,
+         name="Daily minimum 2 m temperature (ensemble spread)"),
+    dict(id="precip_spread", file="apcp.spread.nc", var="apcp",
+         convert=lambda kg: kg * np.sqrt(8), units="mm", scale=0.1, offset=0.0,
+         name="Daily precipitation (ensemble spread, from 3-hourly spread x sqrt(8))"),
+]
+
 SOURCE_META = {
     "name": "NOAA-CIRES-DOE 20th Century Reanalysis version 3 (daily means)",
     "short": "20CRv3",
@@ -231,7 +248,8 @@ def save_manifest(manifest: dict) -> None:
 
 
 def update_source(source: str, meta: dict, map_fields: list[dict], detail_fields: list[dict],
-                  lat, lon, add: tuple[str, str] | None = None, ranges: list[dict] | None = None) -> None:
+                  lat, lon, add: tuple[str, str] | None = None, ranges: list[dict] | None = None,
+                  extra: dict | None = None) -> None:
     """Register or update one source in the manifest. Either merge one new date range
     (`add`) into its ranges, or replace its ranges outright (`ranges`)."""
     with manifest_lock():
@@ -248,6 +266,8 @@ def update_source(source: str, meta: dict, map_fields: list[dict], detail_fields
         src.update(meta)
         src["map"] = dict(path=f"{source}/days/{{year}}/{{date}}.bin.gz", fields=field_meta(map_fields))
         src["detail"] = dict(path=f"{source}/detail/{{year}}/{{date}}.bin.gz", fields=field_meta(detail_fields))
+        for key, fields in (extra or {}).items():   # optional extra kinds, e.g. "uncertainty"
+            src[key] = dict(path=f"{source}/{key}/{{year}}/{{date}}.bin.gz", fields=field_meta(fields))
         if ranges is not None:
             src["ranges"] = ranges
         elif add:
@@ -259,9 +279,12 @@ def update_source(source: str, meta: dict, map_fields: list[dict], detail_fields
         save_manifest(manifest)
 
 
-def write_manifest(year: int, info: dict) -> None:
-    update_source(SOURCE, SOURCE_META, FIELDS, DETAIL_FIELDS, info["lat"], info["lon"],
-                  add=(info["dates"][0], info["dates"][-1]))
+def write_manifest(year: int, info: dict | None, lat=None, lon=None) -> None:
+    """Record the year's dates (info) or just refresh the field lists (info=None)."""
+    update_source(SOURCE, SOURCE_META, FIELDS, DETAIL_FIELDS,
+                  info["lat"] if info else lat, info["lon"] if info else lon,
+                  add=(info["dates"][0], info["dates"][-1]) if info else None,
+                  extra={"uncertainty": UNCERTAINTY_FIELDS})
     print(f"wrote {MANIFEST.relative_to(ROOT)}")
 
 
@@ -285,11 +308,12 @@ def decode_file(manifest: dict, source: str, kind: str, date: str) -> dict[str, 
     return out
 
 
-def verify_year(year: int, dates: list[str]) -> None:
+def verify_year(year: int, dates: list[str], kinds=None) -> None:
     """Round-trip check: decode the first, middle and last day of each kind and compare
     with the source netCDF. Every value must be within half a storage step."""
     manifest = load_manifest()
-    for kind, fields in (("map", FIELDS), ("detail", DETAIL_FIELDS)):
+    kinds = kinds or (("map", FIELDS), ("detail", DETAIL_FIELDS), ("uncertainty", UNCERTAINTY_FIELDS))
+    for kind, fields in kinds:
         sources = {f["id"]: to_display_grid(xr.open_dataset(RAW / str(year) / f["file"])[f["var"]]) for f in fields}
         for date in (dates[0], dates[len(dates) // 2], dates[-1]):
             decoded = decode_file(manifest, SOURCE, kind, date)
@@ -305,11 +329,20 @@ def verify_year(year: int, dates: list[str]) -> None:
 def build(year: int) -> dict:
     info = build_year(year, FIELDS, "days")
     detail = build_year(year, DETAIL_FIELDS, "detail")
-    if detail["dates"] != info["dates"]:
-        raise ValueError("detail dates differ from map dates")
+    unc = build_year(year, UNCERTAINTY_FIELDS, "uncertainty")
+    if not (detail["dates"] == unc["dates"] == info["dates"]):
+        raise ValueError("detail/uncertainty dates differ from map dates")
     write_manifest(year, info)
     verify_year(year, info["dates"])
-    return dict(dates=info["dates"], bytes=info["bytes"] + detail["bytes"])
+    return dict(dates=info["dates"], bytes=info["bytes"] + detail["bytes"] + unc["bytes"])
+
+
+def build_uncertainty(year: int) -> dict:
+    """Only the uncertainty files, for years built before they existed."""
+    unc = build_year(year, UNCERTAINTY_FIELDS, "uncertainty")
+    write_manifest(year, None, unc["lat"], unc["lon"])
+    verify_year(year, unc["dates"], kinds=(("uncertainty", UNCERTAINTY_FIELDS),))
+    return unc
 
 
 if __name__ == "__main__":

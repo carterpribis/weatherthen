@@ -3,6 +3,8 @@
 Usage:
   .venv/bin/python pipeline/backfill.py 1836 1840              # build locally, keep output
   .venv/bin/python pipeline/backfill.py 1836 2015 --upload     # full run: upload to R2, keep disk small
+  .venv/bin/python pipeline/backfill.py 1836 2015 --upload --uncertainty-only
+                      # add the uncertainty files to years built before they existed
 
 Resumable: finished years are recorded in data/backfill-state.json and skipped.
 To stop cleanly after the current year: touch data/backfill.stop
@@ -28,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_days  # noqa: E402
-from fetch import RAW, fetch_year  # noqa: E402
+from fetch import RAW, SPREAD_FILES, fetch_year  # noqa: E402
 
 ROOT = build_days.ROOT
 OUT = build_days.OUT
@@ -66,8 +68,11 @@ def rclone(*args: str) -> None:
     subprocess.run(["rclone", *args], check=True)
 
 
-def upload_year(year: int, remote: str) -> None:
-    for kind in ("days", "detail"):
+KINDS = ("days", "detail", "uncertainty")
+
+
+def upload_year(year: int, remote: str, kinds=KINDS) -> None:
+    for kind in kinds:
         src = OUT / build_days.SOURCE / kind / str(year)
         rclone("copy", str(src), f"{remote}/{build_days.SOURCE}/{kind}/{year}",
                "--transfers", "16", "--checkers", "16", "--s3-no-check-bucket",
@@ -100,17 +105,45 @@ def run(first: int, last: int, upload: bool, remote: str, keep_raw: bool, jobs: 
         result = build_days.build(year)
         if upload:
             upload_year(year, remote)
-            for kind in ("days", "detail"):  # uploaded: free the disk
+            for kind in KINDS:  # uploaded: free the disk
                 shutil.rmtree(OUT / build_days.SOURCE / kind / str(year), ignore_errors=True)
         if not keep_raw:
             shutil.rmtree(RAW / str(year), ignore_errors=True)
         state["done"][str(year)] = dict(days=len(result["dates"]), mb=round(result["bytes"] / 1e6, 1),
-                                        uploaded=upload, at=datetime.now().isoformat(timespec="seconds"))
+                                        uploaded=upload, uncertainty=True,
+                                        at=datetime.now().isoformat(timespec="seconds"))
         save_state(state)
         per_year = (time.time() - started) / n
         left = (len(todo) - n) * per_year
         log(f"{year}: done in {time.time() - t0:.0f}s; {len(todo) - n} years left, about {left / 3600:.1f} h")
     log("backfill finished")
+
+
+def run_uncertainty(first: int, last: int, upload: bool, remote: str, keep_raw: bool, jobs: int) -> None:
+    """Fetch and build only the uncertainty files for years already done without them."""
+    state = load_state()
+    todo = [y for y in range(first, last + 1)
+            if str(y) in state["done"] and not state["done"][str(y)].get("uncertainty")]
+    log(f"uncertainty {first}-{last}: {len(todo)} finished years need it")
+    for year in todo:
+        if STOP.exists():
+            STOP.unlink()
+            log("stop file found; stopping cleanly")
+            return
+        t0 = time.time()
+        fetch_year(year, jobs=jobs, log=log, only=SPREAD_FILES)
+        build_days.build_uncertainty(year)
+        if upload:
+            upload_year(year, remote, kinds=("uncertainty",))
+            shutil.rmtree(OUT / build_days.SOURCE / "uncertainty" / str(year), ignore_errors=True)
+        if not keep_raw:
+            for f in SPREAD_FILES:
+                (RAW / str(year) / f).unlink(missing_ok=True)
+        state = load_state()
+        state["done"][str(year)]["uncertainty"] = True
+        save_state(state)
+        log(f"{year}: uncertainty added in {time.time() - t0:.0f}s")
+    log("uncertainty pass finished")
 
 
 if __name__ == "__main__":
@@ -121,9 +154,14 @@ if __name__ == "__main__":
     ap.add_argument("--remote", default="r2:weatherthen-data")
     ap.add_argument("--keep-raw", action="store_true", help="keep downloaded netCDF files")
     ap.add_argument("--jobs", type=int, default=4, help="parallel downloads (be polite: 4-6)")
+    ap.add_argument("--uncertainty-only", action="store_true",
+                    help="only add uncertainty files to years already done")
     a = ap.parse_args()
     try:
-        run(a.first, a.last, a.upload, a.remote, a.keep_raw, a.jobs)
+        if a.uncertainty_only:
+            run_uncertainty(a.first, a.last, a.upload, a.remote, a.keep_raw, a.jobs)
+        else:
+            run(a.first, a.last, a.upload, a.remote, a.keep_raw, a.jobs)
     except KeyboardInterrupt:
         log("interrupted; re-run to resume")
     except Exception as e:  # noqa: BLE001

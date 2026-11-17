@@ -58,6 +58,14 @@ export function loadDetail(manifest, date) {
   return cachedLoad(`detail|${date}`, () => fetchGrid(manifest, src.detail.path, src.detail.fields, date, src.id));
 }
 
+/** Uncertainty (ensemble spread) for highs, lows and precipitation; null if not built yet. */
+export function loadUncertainty(manifest, date) {
+  const src = sourceFor(manifest, date);
+  if (!src?.uncertainty) return Promise.resolve(null);
+  return cachedLoad(`unc|${date}`, () => fetchGrid(manifest, src.uncertainty.path, src.uncertainty.fields, date, src.id))
+    .catch(() => null);
+}
+
 /** Bilinear value of every field in `fields` at (lon, lat). */
 export function sampleGrid(grid, fields, lon, lat) {
   const { nx, ny, lon0, lat0, dlon, dlat } = grid;

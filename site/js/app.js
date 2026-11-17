@@ -1,4 +1,4 @@
-import { loadManifest, loadDay, loadDetail, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
+import { loadManifest, loadDay, loadDetail, loadUncertainty, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
 import { classifyDay, windFrom } from './conditions.js';
 import { datePicker } from './datepicker.js';
 import { tempScale, RAIN_STOPS, SNOW_STOPS, FRZ_STOPS, PRECIP_MIN, PRECIP_MAX, PRECIP_TICKS_MM, PRECIP_TICKS_IN } from './colors.js';
@@ -308,12 +308,13 @@ async function loadReport() {
       .then((m) => { if (!stale()) modelEl.innerHTML = m ? modelHtml(m) : ''; if (!stale() && m) drawHourly(m); })
       .catch((err) => { if (!stale()) modelEl.innerHTML = `<p class="r-note">Couldn’t load model weather: ${esc(err.message)}</p>`; });
   } else if (hasMap(manifest, date)) {
-    const [day, detail] = await Promise.all([
+    const [day, detail, unc] = await Promise.all([
       loadDay(manifest, date).catch(() => null),
       loadDetail(manifest, date).catch(() => null),
+      loadUncertainty(manifest, date),
     ]);
     if (stale()) return;
-    modelEl.innerHTML = reanalysisHtml(place, day, detail);
+    modelEl.innerHTML = reanalysisHtml(place, day, detail, unc);
   } else {
     modelEl.innerHTML = '<p class="r-note">No model data for this date yet.</p>';
   }
@@ -358,10 +359,11 @@ function modelHtml(m) {
     ${partial}${source}`;
 }
 
-function reanalysisHtml(place, day, detail) {
+function reanalysisHtml(place, day, detail, unc) {
   if (!day) return '<p class="r-note">Couldn’t load the reconstruction for this day.</p>';
   const s = sampleGrid(manifest.grid, day.fields, place.lon, place.lat);
   const d = detail && sampleGrid(manifest.grid, detail.fields, place.lon, place.lat);
+  const u = unc ? sampleGrid(manifest.grid, unc.fields, place.lon, place.lat) : {};
   const facts = [];
   let head;
   if (d) {
@@ -369,13 +371,13 @@ function reanalysisHtml(place, day, detail) {
     head = `<span class="r-icon" aria-hidden="true">${icon}</span>
       <div>
         <div class="r-cond">${text}</div>
-        <div class="r-temps">High <b>${fmtTemp(d.tmax)}</b> · Low <b>${fmtTemp(d.tmin)}</b></div>
+        <div class="r-temps">High <b>${fmtTemp(d.tmax)}</b>${pm(u.tmax_spread, fmtDelta)} · Low <b>${fmtTemp(d.tmin)}</b>${pm(u.tmin_spread, fmtDelta)}</div>
       </div>`;
     // Precipitation is the depth of water (snow melted). When it snowed, also give a rough
     // snow depth: fresh snow is about 10x its melted water (5x wet, 20x powder).
     const snowy = d.precip >= 1 && d.snow_frac >= 0.15;
     const how = !snowy ? '' : d.snow_frac >= 0.8 ? 'as snow' : `snow ${Math.round(d.snow_frac * 100)}% of the day`;
-    facts.push(['Precipitation', `${fmtMm(d.precip)}${how ? ` <small>${how}</small>` : ''}`]);
+    facts.push(['Precipitation', `${fmtMm(d.precip)}${pm(u.precip_spread, fmtMmDelta)}${how ? ` <small>${how}</small>` : ''}`]);
     if (snowy) {
       const snowCm = d.precip * Math.min(1, d.snow_frac / 0.8);   // mm of water x 10 = mm of snow = this many cm
       facts.push(['Snowfall (est.)', `about ${fmtSnowEstimate(snowCm)}`]);
@@ -609,6 +611,7 @@ const fmtSnowEstimate = (cm) => {
   const v = state.fahrenheit ? cm / 2.54 : cm;
   return `${v >= 2 ? Math.round(v) : v.toFixed(1)} ${state.fahrenheit ? 'in' : 'cm'}`;
 };
+const fmtMmDelta = (mm) => (state.fahrenheit ? (mm / 25.4).toFixed(2) : mm.toFixed(1));
 const fmtCm = (cm) => (cm == null ? '–' : state.fahrenheit ? `${(cm / 2.54).toFixed(1)} in` : `${cm.toFixed(1)} cm`);
 const fmtSpeed = (kmh) => (state.fahrenheit ? `${(kmh / 1.609).toFixed(0)} mph` : `${kmh.toFixed(0)} km/h`);
 const fmtKm = (km) => (state.fahrenheit ? `${(km / 1.609).toFixed(0)} mi away` : `${km.toFixed(0)} km away`);
