@@ -341,9 +341,9 @@ function modelHtml(m) {
   }
   const source = m.source === 'era5'
     ? sourceLine('ERA5 reanalysis by ECMWF / Copernicus, via Open-Meteo', 'https://open-meteo.com/en/docs/historical-weather-api',
-      'Model reconstruction, ~25 km grid.')
+      'Europe’s weather centre rebuilt this day’s weather from millions of observations: stations, weather balloons, ships, aircraft and satellites.')
     : sourceLine('Recent weather-model data, via Open-Meteo', 'https://open-meteo.com/en/docs',
-      'Recent model data; may still be revised.');
+      'The latest forecast-model estimates; may still change slightly.');
   const partial = state.date === today() ? '<p class="r-note">Today includes forecast hours.</p>' : '';
   return `
     <div class="r-summary">
@@ -395,7 +395,7 @@ function reanalysisHtml(place, day, detail, unc) {
     <div class="r-summary">${head}</div>
     <dl class="r-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
     ${sourceLine('NOAA-CIRES-DOE 20th Century Reanalysis v3', 'https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html',
-      'Model reconstruction from historical pressure readings, ~110 km grid. ± is the spread of its 80 runs.')}`;
+      'NOAA rebuilt this day’s weather from old barometer readings taken at weather stations and on ships. They ran the rebuild 80 times; ± shows how much those versions differ.')}`;
 }
 
 function stationsHtml(list, date) {
