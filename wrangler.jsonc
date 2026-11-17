@@ -1,0 +1,17 @@
+// Cloudflare deployment for the site (static files in site/, no server code).
+// Map data is not here: it lives in the R2 bucket "weatherthen-data", served at
+// https://data.weather.prib.is (see ARCHIVE_PLAN.md and infra/).
+// Deploy:  wrangler deploy
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "weatherthen",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./site",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "weather.prib.is", "custom_domain": true }
+  ],
+  "workers_dev": true
+}

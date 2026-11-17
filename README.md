@@ -48,9 +48,15 @@ python3 serve.py
 
 `serve.py` serves `site/` with no caching, so code changes show up on reload.
 
-**Data location:** on localhost the site reads data from `site/data/`. Elsewhere it reads from the R2 domain set in `site/js/config.js`. Add `?data=local` or `?data=remote` to override.
+**Data location:** on localhost the site reads data from `data/out/`, which `serve.py` serves at `/data/`. Elsewhere it reads from the R2 domain set in `site/js/config.js`. Add `?data=local` or `?data=remote` to override.
 
 Then open http://localhost:8788. Keyboard: ← and → change the day, and space plays or pauses.
+
+## Hosting
+
+- **Site:** `site/` is deployed to Cloudflare as static assets: `wrangler deploy` (see `wrangler.jsonc`). It's served at https://weather.prib.is and https://weatherthen.cart-prib.workers.dev. `site/_headers` makes browsers re-check code on every visit.
+- **Map data:** the R2 bucket `weatherthen-data`, at https://data.weather.prib.is. Day files are cached for a year (they never change), and `manifest.json` for 5 minutes. Which sites may read the data is set in `infra/r2-cors.json` (`wrangler r2 bucket cors set weatherthen-data --file infra/r2-cors.json`).
+- **Uploads:** `pipeline/backfill.py --upload` uses rclone with a bucket-scoped R2 key. Set it up once with `bash infra/setup-rclone.sh <account-id>`. The key stays in rclone's config, never in this repo.
 
 ## Who wrote what
 

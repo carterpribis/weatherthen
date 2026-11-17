@@ -1,0 +1,28 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": [
+          "https://weather.prib.is",
+          "https://weatherthen.cart-prib.workers.dev",
+          "https://weatherthen.pages.dev",
+          "https://weatherthen.com",
+          "https://www.weatherthen.com",
+          "http://localhost:8788"
+        ],
+        "methods": [
+          "GET",
+          "HEAD"
+        ],
+        "headers": [
+          "*"
+        ]
+      },
+      "exposeHeaders": [
+        "ETag",
+        "Content-Length"
+      ],
+      "maxAgeSeconds": 86400
+    }
+  ]
+}
