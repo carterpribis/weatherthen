@@ -123,12 +123,40 @@ def mark_done(dates: list[str]) -> list[str]:
 
 # ---- fetch -----------------------------------------------------------------------------
 
+def cds_client():
+    """Copernicus client from ~/.cdsapirc (the key is never printed or logged)."""
+    from ecmwf.datastores import Client  # imported here so the rest of the module works without it
+
+    cfg = dict(line.split(":", 1) for line in Path.home().joinpath(".cdsapirc").read_text().splitlines() if ":" in line)
+    return Client(url=cfg["url"].strip(), key=cfg["key"].strip(), progress=False,
+                  sleep_max=120, timeout=600, maximum_tries=500, retry_after=120)
+
+
+def submit_or_reattach(req: dict, job_file: Path, label: str):
+    """Send a request, or pick up the one a stopped run left queued (its id is saved in job_file),
+    so a restart never loses its place in the queue or trips the one-request-at-a-time limit."""
+    client = cds_client()
+    if job_file.exists():
+        request_id = job_file.read_text().strip()
+        try:
+            remote = client.get_remote(request_id)
+            status = remote.status
+        except Exception as e:  # noqa: BLE001 (gone or expired: send a new one)
+            status = f"unavailable ({str(e)[:80]})"
+        if status in ("accepted", "running", "successful"):
+            log(f"{label}: picked up request already in the queue ({status})")
+            return remote
+        log(f"{label}: earlier request {status}; sending a new one")
+    remote = client.submit(DATASET, req)
+    job_file.write_text(remote.request_id + "\n")
+    log(f"{label}: requested")
+    return remote
+
+
 def fetch(kind: str, year: int, months: list[int], days: list[int], folder: Path, label: str) -> xr.Dataset:
     """One CDS request -> lazy Dataset with dims (time, lat, lon). Cached on disk.
 
     The CDS takes the cross product of months x days and skips dates that don't exist."""
-    import cdsapi  # imported here so the rest of the module works without it
-
     names, hours = REQUESTS[kind]
     target = folder / f"{kind}.download"
     if not target.exists():
@@ -140,9 +168,21 @@ def fetch(kind: str, year: int, months: list[int], days: list[int], folder: Path
         }
         part = target.with_suffix(".part")
         t0 = time.time()
-        log(f"{label} {kind}: requested")
-        cdsapi.Client(quiet=True, progress=False, sleep_max=120, timeout=600).retrieve(DATASET, req).download(str(part))
+        while True:
+            remote = submit_or_reattach(req, folder / f"{kind}.job", f"{label} {kind}")
+            try:
+                remote.download(str(part))        # waits in the queue, then downloads
+                break
+            except Exception as e:  # noqa: BLE001
+                if "Maximum number queued" not in str(e):
+                    raise
+                # Another of our requests still holds the queue slot (e.g. one left by a run
+                # that died while waiting): wait for it to clear, then send ours again.
+                (folder / f"{kind}.job").unlink(missing_ok=True)
+                log(f"{label} {kind}: Copernicus is still busy with an earlier request; retrying in 10 min")
+                time.sleep(600)
         part.rename(target)
+        (folder / f"{kind}.job").unlink(missing_ok=True)
         log(f"{label} {kind}: downloaded {target.stat().st_size / 1e6:.0f} MB, {(time.time() - t0) / 60:.0f} min after request")
     # Instantaneous and accumulated variables can arrive as a zip of two netCDF files.
     files = [target]
