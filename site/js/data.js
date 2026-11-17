@@ -18,15 +18,6 @@ export async function loadManifest() {
   return m;
 }
 
-export async function loadEvents() {
-  try {
-    const res = await fetch('events.json');
-    return res.ok ? res.json() : [];
-  } catch {
-    return [];
-  }
-}
-
 /** The source that has a map for this date: {id, ...source} or null. */
 export function sourceFor(manifest, date) {
   for (const id of manifest.priority) {

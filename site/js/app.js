@@ -1,4 +1,4 @@
-import { loadManifest, loadEvents, loadDay, loadDetail, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
+import { loadManifest, loadDay, loadDetail, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
 import { classifyDay, windFrom } from './conditions.js';
 import { datePicker } from './datepicker.js';
 import { tempScale, RAIN_STOPS, SNOW_STOPS, FRZ_STOPS, PRECIP_MIN, PRECIP_MAX, PRECIP_TICKS } from './colors.js';
@@ -18,7 +18,7 @@ const els = {
   canvas: $('map'), dateLong: $('date-long'), datePickerEl: $('date-picker'), slider: $('slider'),
   prev: $('prev'), next: $('next'), play: $('play'), uncertainty: $('uncertainty'),
   legendBar: $('legend-bar'), legendTicks: $('legend-ticks'),
-  events: $('events'), tip: $('tip'), status: $('status'), about: $('about'),
+  tip: $('tip'), status: $('status'), about: $('about'),
   aboutOpen: $('about-open'), aboutClose: $('about-close'), reset: $('reset'), legend: $('legend'),
   search: $('place-search'), results: $('place-results'), report: $('report'),
   reportBody: $('report-body'), reportClose: $('report-close'), notice: $('notice'),
@@ -43,7 +43,7 @@ main().catch((err) => {
 
 async function main() {
   setStatus('Loading…');
-  const [m, events] = await Promise.all([loadManifest(), loadEvents()]);
+  const m = await loadManifest();
   manifest = m;
   map = new WeatherMap(els.canvas, m);
   map.onChange = () => updateTip();
@@ -56,7 +56,6 @@ async function main() {
   setupDateControls();
   setupSearch();
   setupMisc();
-  renderEvents(events);
   drawLegend();
 
   const q = new URLSearchParams(location.search);
@@ -473,7 +472,7 @@ function setLayer(layer) {
   $('legend-temp').hidden = precip;
   $('legend-precip').hidden = !precip;
   $('legend-title').textContent = precip
-    ? 'Daily total (snow melted)'
+    ? 'Rain and snow that day'
     : 'Daily average, 2 m above ground';
   map.setLayer(layer);
   if (precip && state.dayLoaded && !map.detail) {
@@ -568,27 +567,6 @@ function drawLegend() {
     const label = state.fahrenheit ? `${(mm / 25.4).toFixed(mm < 10 ? 2 : 1)}${last ? ' in' : ''}` : `${mm}${last ? ' mm' : ''}`;
     return `<span style="left:${pct}%"${last ? ' class="last"' : ''}>${label}</span>`;
   }).join('');
-}
-
-function renderEvents(events) {
-  const available = events.filter((ev) => hasMap(manifest, ev.date));
-  if (!available.length) { $('events-wrap').hidden = true; return; }
-  els.events.innerHTML = '';
-  for (const ev of available) {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.innerHTML = `<span class="ev-title">${esc(ev.title)}</span><span class="ev-meta">${esc(ev.place)} · ${shortDate(ev.date)}</span>`;
-    b.addEventListener('click', async () => {
-      stop();
-      hideWelcome();
-      await show(ev.date);
-      map.flyTo(ev.view.lon, ev.view.lat, ev.view.zoom);
-      if (matchMedia('(max-width: 700px)').matches) els.legend.open = false;
-    });
-    li.append(b);
-    els.events.append(li);
-  }
 }
 
 function updateUrl() {

@@ -43,7 +43,7 @@ Static files in `site/` with no build step: `index.html`, `style.css` and ES mod
   - **Open-Meteo:** the ERA5 archive for 1940 to a few days ago, and the forecast API for the last ~90 days (so yesterday works).
   - **NOAA GHCN-Daily:** nearby station records via the NCEI Access Data Service.
   - All of these are keyless and called directly from the browser.
-- `js/app.js` handles dates (1836 to today; the slider spans the selected year), playback, search, the report panel, the welcome prompt, units, famous days (`events.json`) and the shareable URL (`?date=&lat=&lon=&place=&cc=`).
+- `js/app.js` handles dates (1836 to today; the slider spans the selected year), playback, search, the report panel, the first-visit hint, units and the shareable URL (`?date=&lat=&lon=&place=&cc=`).
 
 Preview locally:
 
