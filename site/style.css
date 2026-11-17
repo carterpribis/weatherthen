@@ -67,7 +67,10 @@ button, input, select { font: inherit; color: inherit; }
 .title-card {
   padding: 10px 16px 12px;
   flex: none;
+  z-index: 3;            /* above the report, so place suggestions drop down over it */
 }
+.left-col .report { z-index: 1; }
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .title-card h1 {
   margin: 0;
   font: 600 13px/1.2 var(--sans);
@@ -75,6 +78,44 @@ button, input, select { font: inherit; color: inherit; }
   text-transform: uppercase;
   color: var(--accent);
 }
+
+/* °F / °C switch */
+.unit-toggle {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 2px;
+  flex: none;
+}
+.unit-toggle button {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 600 12px/1 var(--sans);
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.unit-toggle button[aria-pressed="true"] { background: var(--accent); color: #1b1608; }
+
+/* month / day / year picker */
+.date-picker { display: flex; gap: 4px; flex: none; }
+.date-picker select, .date-picker input {
+  height: 36px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.date-picker select option { background: #161a22; color: var(--text); }
+.date-picker .dp-month { width: 64px; }
+.date-picker .dp-day { width: 50px; }
+.date-picker .dp-year { width: 62px; text-align: center; }
+.welcome .date-picker { flex: 1; }
+.welcome .date-picker select, .welcome .date-picker input { height: 38px; }
+.welcome .date-picker .dp-month { flex: 1; width: auto; }
 .date-long {
   margin: 4px 0 0;
   font: 500 24px/1.15 var(--serif);
@@ -337,14 +378,6 @@ body.has-report .notice { left: calc(50% + 180px); max-width: min(420px, calc(10
 #play { background: var(--accent); color: #1b1608; border-color: transparent; font-size: 14px; }
 #play:hover { background: #ffd36b; }
 #slider { flex: 1; min-width: 60px; accent-color: var(--accent); }
-#date-input {
-  flex: none;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  padding: 6px 8px;
-  height: 36px;
-}
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -454,7 +487,14 @@ dialog a { color: var(--accent); }
   body.has-report .legend { display: none; }
   .controls { flex-wrap: wrap; }
   #slider { order: 10; flex-basis: 100%; }
-  #date-input { flex: 1; min-width: 0; }
+  #reset { display: none; }                       /* pinch-zoom covers it on phones */
+  .controls { gap: 5px; padding: 7px; }
+  .controls button { width: 34px; }
+  #date-picker { flex: 1; min-width: 0; gap: 3px; }
+  #date-picker select, #date-picker input { padding: 0 3px; }
+  #date-picker .dp-month { flex: 1.3; width: auto; min-width: 0; }
+  #date-picker .dp-day { flex: 1; width: auto; min-width: 0; }
+  #date-picker .dp-year { flex: 1.1; width: auto; min-width: 0; }
   /* report becomes a bottom sheet above the date controls */
   .report {
     position: fixed !important;

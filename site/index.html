@@ -16,7 +16,13 @@
 
   <div class="left-col">
     <header class="panel title-card">
-      <h1>Weather Then</h1>
+      <div class="title-row">
+        <h1>Weather Then</h1>
+        <div class="unit-toggle" role="group" aria-label="Units">
+          <button type="button" data-units="F" aria-pressed="true" title="Fahrenheit, inches, mph">°F</button>
+          <button type="button" data-units="C" aria-pressed="false" title="Celsius, millimetres, km/h">°C</button>
+        </div>
+      </div>
       <p id="date-long" class="date-long" aria-live="polite">&nbsp;</p>
       <div class="search">
         <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -36,7 +42,7 @@
     <h2>What was the weather the day you were born?</h2>
     <p>Pick a date, then a place. Any day from 1836 to today works.</p>
     <div class="welcome-row">
-      <input id="welcome-date" type="date" aria-label="Date">
+      <div id="welcome-date"></div>
       <button id="welcome-go" type="button" class="primary">Next: choose a place</button>
     </div>
     <button id="welcome-skip" type="button" class="link">Or explore the Great Blizzard of 1888</button>
@@ -53,10 +59,6 @@
       </div>
       <div class="legend-head">
         <span id="legend-title">Daily average, 2 m above ground</span>
-        <select id="units" aria-label="Units">
-          <option value="C">°C, mm</option>
-          <option value="F">°F, in</option>
-        </select>
       </div>
       <div id="legend-temp">
         <canvas id="legend-bar" width="220" height="12"></canvas>
@@ -90,7 +92,7 @@
     <button id="play" type="button" title="Play (space)" aria-label="Play" aria-pressed="false">▶</button>
     <button id="next" type="button" title="Next day (→)" aria-label="Next day">›</button>
     <input id="slider" type="range" min="0" max="365" value="0" aria-label="Day of the year">
-    <input id="date-input" type="date" aria-label="Choose a date">
+    <div id="date-picker"></div>
     <button id="reset" type="button" title="Reset the view" aria-label="Reset the view">⤢</button>
   </div>
 

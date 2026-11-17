@@ -1,5 +1,6 @@
 import { loadManifest, loadEvents, loadDay, loadDetail, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
 import { classifyDay, windFrom } from './conditions.js';
+import { datePicker } from './datepicker.js';
 import { tempScale, RAIN_STOPS, SNOW_STOPS, FRZ_STOPS, PRECIP_MIN, PRECIP_MAX, PRECIP_TICKS } from './colors.js';
 import { WeatherMap } from './map.js';
 import { searchPlaces, pointPlace } from './places.js';
@@ -14,9 +15,9 @@ const PLACE_ZOOM = 6.3;     // MapLibre zoom: about a state's width
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  canvas: $('map'), dateLong: $('date-long'), dateInput: $('date-input'), slider: $('slider'),
+  canvas: $('map'), dateLong: $('date-long'), datePickerEl: $('date-picker'), slider: $('slider'),
   prev: $('prev'), next: $('next'), play: $('play'), uncertainty: $('uncertainty'),
-  units: $('units'), legendBar: $('legend-bar'), legendTicks: $('legend-ticks'),
+  legendBar: $('legend-bar'), legendTicks: $('legend-ticks'),
   events: $('events'), tip: $('tip'), status: $('status'), about: $('about'),
   aboutOpen: $('about-open'), aboutClose: $('about-close'), reset: $('reset'), legend: $('legend'),
   search: $('place-search'), results: $('place-results'), report: $('report'),
@@ -26,10 +27,15 @@ const els = {
 };
 
 const state = {
-  date: DEFAULT_DATE, place: null, playing: false, fahrenheit: false, pointer: null, layer: 'temp',
+  date: DEFAULT_DATE, place: null, playing: false, fahrenheit: true, pointer: null, layer: 'temp',
   dayLoaded: null, reportTimer: 0, reportToken: 0,
 };
-let manifest, map;
+let manifest, map, picker, welcomePicker;
+
+function markUnits() {
+  document.querySelectorAll('.unit-toggle button').forEach((b) =>
+    b.setAttribute('aria-pressed', String((b.dataset.units === 'F') === state.fahrenheit)));
+}
 
 main().catch((err) => {
   console.error(err);
@@ -44,8 +50,8 @@ async function main() {
   map.onChange = () => updateTip();
   await map.ready;
 
-  try { state.fahrenheit = localStorage.getItem('units') === 'F'; } catch {}
-  els.units.value = state.fahrenheit ? 'F' : 'C';
+  try { state.fahrenheit = (localStorage.getItem('units') || 'F') === 'F'; } catch {}  // °F unless chosen
+  markUnits();
   if (matchMedia('(max-width: 700px)').matches) els.legend.open = false;
 
   setupDateControls();
@@ -77,7 +83,7 @@ async function show(date) {
   els.slider.max = daysBetween(`${year}-01-01`, lastOfYear);
   els.slider.value = daysBetween(`${year}-01-01`, date);
   els.slider.setAttribute('aria-valuetext', longDate(date));
-  els.dateInput.value = date;
+  picker.set(date);
   els.dateLong.textContent = longDate(date);
   els.prev.disabled = date <= FIRST_DATE;
   els.next.disabled = date >= today();
@@ -139,14 +145,10 @@ function updateNotice() {
 }
 
 function setupDateControls() {
-  els.dateInput.min = FIRST_DATE;
-  els.dateInput.max = today();
+  picker = datePicker(els.datePickerEl, { label: 'Date', onChange: (d) => { stop(); show(d); } });
   els.slider.addEventListener('input', () => {
     stop();
     show(addDays(`${state.date.slice(0, 4)}-01-01`, +els.slider.value));
-  });
-  els.dateInput.addEventListener('change', () => {
-    if (els.dateInput.value) { stop(); show(els.dateInput.value); }
   });
   els.prev.addEventListener('click', () => { stop(); show(addDays(state.date, -1)); });
   els.next.addEventListener('click', () => { stop(); show(addDays(state.date, 1)); });
@@ -341,7 +343,7 @@ function modelHtml(m) {
   }
   const source = m.source === 'era5'
     ? sourceLine('ERA5 reanalysis by ECMWF / Copernicus, via Open-Meteo', 'https://open-meteo.com/en/docs/historical-weather-api',
-      'A model reconstruction on a ~25 km grid, built from millions of observations; it can read milder or cooler than a single thermometer.')
+      'A model reconstruction on a ~25 km grid that combines millions of observations from stations, balloons, aircraft, ships and satellites; values are averages over the grid square, not a single thermometer.')
     : sourceLine('Recent weather-model data, via Open-Meteo', 'https://open-meteo.com/en/docs',
       'Model analyses and forecasts for the last few months; values may still be revised.');
   const partial = state.date === today() ? '<p class="r-note">Today includes forecast hours.</p>' : '';
@@ -387,7 +389,7 @@ function reanalysisHtml(place, day, detail) {
     <div class="r-summary">${head}</div>
     <dl class="r-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
     ${sourceLine('NOAA-CIRES-DOE 20th Century Reanalysis v3', 'https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html',
-      'A model reconstruction for this area (about 110 km grid) from historical pressure readings at stations and on ships, not a measurement. Against New York’s 1888 records it gets highs and lows within about 3 °C on a typical day and catches 95% of wet days, but shows light rain on more days than stations recorded. ± is the spread between the reconstruction’s 80 runs.')}`;
+      'A model reconstruction for this area (about 110 km grid), not a measurement: it rebuilds the weather from historical air-pressure readings taken at stations and on ships, plus sea-surface temperatures and sea ice. It is run 80 times; ± shows how much the runs disagree.')}`;
 }
 
 function stationsHtml(list, date) {
@@ -493,8 +495,8 @@ function precipKind(s) {
 
 function showWelcome() {
   els.welcome.hidden = false;
-  els.welcomeDate.max = today();
-  els.welcomeDate.min = FIRST_DATE;
+  welcomePicker ??= datePicker(els.welcomeDate, { label: 'Your birthday' });
+  welcomePicker.set(`${+today().slice(0, 4) - 30}-01-01`);
 }
 
 function hideWelcome() {
@@ -511,20 +513,21 @@ function setupMisc() {
     map.setUncertainty(els.uncertainty.checked);
     $('veil-key').hidden = !els.uncertainty.checked;
   });
-  els.units.addEventListener('change', () => {
-    state.fahrenheit = els.units.value === 'F';
-    try { localStorage.setItem('units', els.units.value); } catch {}
+  document.querySelectorAll('.unit-toggle button').forEach((b) => b.addEventListener('click', () => {
+    state.fahrenheit = b.dataset.units === 'F';
+    try { localStorage.setItem('units', b.dataset.units); } catch {}
+    markUnits();
     drawLegend();
     updateTip();
     if (state.place) scheduleReport(0);
-  });
+  }));
   els.reportClose.addEventListener('click', () => setPlace(null));
   els.aboutOpen.addEventListener('click', () => els.about.showModal());
   els.aboutClose.addEventListener('click', () => els.about.close());
   els.about.addEventListener('click', (e) => { if (e.target === els.about) els.about.close(); });
 
   els.welcomeGo.addEventListener('click', () => {
-    const d = clampDate(els.welcomeDate.value);
+    const d = clampDate(welcomePicker?.get());
     hideWelcome();
     if (d) show(d);
     els.search.focus();
