@@ -11,7 +11,7 @@ A map (temperature, pressure, rain and snow) for every day from 1 January 1836 t
 | Dates | Source | Why | Arrives |
 |---|---|---|---|
 | 1836–2015 | **NOAA 20CRv3** (what 1888 uses now) | Same pipeline, same fields, includes the uncertainty spread | One-time backfill |
-| 2016 → 5 days ago | **ERA5 / ERA5T** hourly data (Copernicus), daily values computed locally | Best modern reanalysis; ERA5T is published 5 days behind real time. (The ready-made daily-statistics product queued for hours, so we switched.) | Backfill one request at a time, then daily |
+| 2016 → 5 days ago | **ERA5 / ERA5T** hourly data (Copernicus), daily values computed locally | Best modern reanalysis; ERA5T is published 5 days behind real time. (The ready-made daily-statistics product queued for hours, so we switched.) | Backfill a year per request, one request at a time, then daily |
 | Last 4–5 days | **NOAA GFS analyses** (NOMADS, about 7–10 days kept) | Fills the ERA5T gap so yesterday has a map; marked "preliminary" | Daily, replaced by ERA5 when it arrives |
 
 All three are converted to the same 1° grid and the same field ids (`prmsl`, `t2m`, `tmax`, `precip`, `snow_frac`…). The front end decodes them the same way.
@@ -43,7 +43,7 @@ Size and cost:
 | | Days | Objects (map + detail) | Size |
 |---|---|---|---|
 | 20CR 1836–2015 | 65,744 | 131,488 | ~20.7 GB (315 KB/day measured on 1888) |
-| ERA5 2016–now | ~3,970 | ~7,940 | ~1.3 GB (estimate; measure on a test month) |
+| ERA5 2016–now | ~3,970 | ~7,940 | ~1.3 GB (January 2016 measured 10.6 MB, so about 1.4 GB) |
 | **Total** | | **~140,000** | **~22 GB** |
 
 - **Storage:** R2 includes 10 GB a month free, then $0.015 per GB-month. 22 GB comes to about **$0.18 a month**.
@@ -64,7 +64,7 @@ Size and cost:
    - At ~3.2 MB/s that's about **8–9 hours**, best run overnight.
    - Building takes about 30 s a year, or 1.5 hours in all.
    - If it runs inside a Claude Code session, keep the Mac awake.
-4. **ERA5 2016 onwards:** a CDS API script, one request per variable per month, about 11 variables × 131 months.
+4. **ERA5 2016 onwards:** a CDS API script, two requests per year (hourly temperature and precipitation; 3-hourly pressure, cloud, wind and snow). Each request waits about 2–3 hours in the Copernicus queue whatever its size, so monthly requests (about 5.5 hours a month, about 30 days in all) were switched to yearly ones (about 22 requests).
    - **Download size:** to measure with one test month before committing.
    - **Speed:** CDS queues requests, so expect hours to a day.
    - **Grid:** tested on 16 Nov 2026: the daily-statistics request accepts `"grid": ["1.0", "1.0"]`. The server regrids to the same 1° grid as 20CR (lat 90 to −90, lon 0–359), so nothing needs regridding locally.
@@ -127,7 +127,7 @@ Run time is about 5–10 minutes a day, which is free on a public repo and about
 2. ✅ Front end: source-aware manifest, `DATA_ROOT` and the cache headers.
 3. ✅ R2 bucket and domain, then upload the test years and check the live site reading from R2.
 4. ⏳ Full 20CR backfill overnight (running since 16 Nov 2026, 21:06), then validation.
-5. ERA5 script, test month, backfill 2016 onwards, then validation (the Copernicus key is set up).
+5. ERA5 script ✅, test month ✅ (January 2016 against Central Park: highs and lows within about 2 °C, every wet day caught, the blizzard shown as heavy snow), backfill 2016 onwards ⏳.
 6. GFS preliminary days.
 7. GitHub repo and the Actions daily job *(needs you)*, and deploy the site to weather.prib.is.
 

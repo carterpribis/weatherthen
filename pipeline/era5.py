@@ -10,7 +10,8 @@ Needs ~/.cdsapirc (see infra/setup-cds.sh) and the ERA5 licence accepted on the 
 Uses ERA5 hourly data ("reanalysis-era5-single-levels"), regridded by the CDS to the same
 1-degree grid as 20CRv3, and computes the daily values here. (The CDS "daily statistics"
 product does that server-side, but its queue was far slower.) The CDS asks for requests
-to be sent one at a time, so months are fetched strictly in sequence:
+to be sent one at a time, and each request waits hours in its queue whatever its size, so
+a whole year goes in one pair of requests, sent strictly in sequence:
   request "hourly":  2 m temperature, precipitation, snowfall at every hour
                      -> daily mean/max/min temperature, daily totals
   request "3hourly": pressure, cloud, wind, snow depth and density every 3 hours
@@ -21,9 +22,13 @@ snowfall / precipitation, freezing rain not available (0). Daily totals sum the 
 amounts stamped 00:00-23:00 UTC (each covers the hour before), i.e. 23:00 the day before
 to 23:00; close enough for a daily map.
 
+A request ("chunk") covers every complete month still missing in one year; a partly
+missing month (the latest one, usually) gets its own chunk with just those days. Each
+downloaded chunk is then converted a month at a time, so memory stays small.
+
 Resumable: built days are recorded in data/era5-state.json, which is also what the
 manifest's ERA5 date ranges are rebuilt from. Progress goes to data/era5.log. Stops at
-the first error so a bad month never burns through the queue unattended.
+the first error so a bad request never burns through the queue unattended.
 """
 
 from __future__ import annotations
@@ -118,8 +123,10 @@ def mark_done(dates: list[str]) -> list[str]:
 
 # ---- fetch -----------------------------------------------------------------------------
 
-def fetch(kind: str, year: int, month: int, days: list[int], folder: Path) -> xr.Dataset:
-    """One CDS request -> Dataset with dims (time, lat, lon). Cached on disk."""
+def fetch(kind: str, year: int, months: list[int], days: list[int], folder: Path, label: str) -> xr.Dataset:
+    """One CDS request -> lazy Dataset with dims (time, lat, lon). Cached on disk.
+
+    The CDS takes the cross product of months x days and skips dates that don't exist."""
     import cdsapi  # imported here so the rest of the module works without it
 
     names, hours = REQUESTS[kind]
@@ -127,16 +134,16 @@ def fetch(kind: str, year: int, month: int, days: list[int], folder: Path) -> xr
     if not target.exists():
         req = {
             "product_type": ["reanalysis"], "variable": list(names),
-            "year": [str(year)], "month": [f"{month:02d}"], "day": [f"{d:02d}" for d in days],
+            "year": [str(year)], "month": [f"{m:02d}" for m in months], "day": [f"{d:02d}" for d in days],
             "time": hours, "data_format": "netcdf", "download_format": "unarchived",
             "grid": ["1.0", "1.0"],
         }
         part = target.with_suffix(".part")
         t0 = time.time()
-        log(f"{year}-{month:02d} {kind}: requested")
+        log(f"{label} {kind}: requested")
         cdsapi.Client(quiet=True, progress=False, sleep_max=120, timeout=600).retrieve(DATASET, req).download(str(part))
         part.rename(target)
-        log(f"{year}-{month:02d} {kind}: downloaded {target.stat().st_size / 1e6:.0f} MB, {(time.time() - t0) / 60:.0f} min after request")
+        log(f"{label} {kind}: downloaded {target.stat().st_size / 1e6:.0f} MB, {(time.time() - t0) / 60:.0f} min after request")
     # Instantaneous and accumulated variables can arrive as a zip of two netCDF files.
     files = [target]
     if zipfile.is_zipfile(target):
@@ -155,7 +162,7 @@ def fetch(kind: str, year: int, month: int, days: list[int], folder: Path) -> xr
     missing = set(names.values()) - set(ds.data_vars)
     if missing:
         raise ValueError(f"{kind}: missing variables {sorted(missing)} in CDS response")
-    return ds.load()
+    return ds
 
 
 # ---- convert --------------------------------------------------------------------------
@@ -225,7 +232,7 @@ def rclone(*args: str) -> None:
     subprocess.run(["rclone", *args], check=True)
 
 
-def upload_days(dates: list[str], remote: str) -> None:
+def upchunk_dates(dates: list[str], remote: str) -> None:
     for kind in ("days", "detail"):
         for year in sorted({d[:4] for d in dates}):
             src = OUT / SOURCE / kind / year
@@ -243,19 +250,20 @@ def upload_manifest(remote: str) -> None:
                "--header-upload", "Content-Type: application/json")
 
 
-# ---- one month -------------------------------------------------------------------------
+# ---- one chunk (one pair of requests) ----------------------------------------------
 
-def do_month(year: int, month: int, days: list[int], upload: bool, remote: str, keep: bool) -> int:
-    folder = RAW / f"{year}-{month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    hourly = fetch("hourly", year, month, days, folder)       # strictly one request at a time
-    three = fetch("3hourly", year, month, days, folder)
-    map_vals, detail_vals, dates, lat, lon = to_fields(hourly, three)
+def build_month(hourly: xr.Dataset, three: xr.Dataset, year: int, month: int,
+                upload: bool, remote: str, keep: bool) -> int:
+    span = f"{year}-{month:02d}"
+    h, t = hourly.sel(time=span).load(), three.sel(time=span).load()
+    if h.sizes["time"] == 0 or t.sizes["time"] == 0:
+        raise ValueError(f"{span}: no data in CDS response")
+    map_vals, detail_vals, dates, lat, lon = to_fields(h, t)
     size = write_days(map_vals, MAP_FIELDS, "days", dates) + write_days(detail_vals, DETAIL_FIELDS, "detail", dates)
     verify(map_vals, MAP_FIELDS, "days", dates)
     verify(detail_vals, DETAIL_FIELDS, "detail", dates)
     if upload:
-        upload_days(dates, remote)
+        upchunk_dates(dates, remote)
     done = mark_done(dates)
     bd.update_source(SOURCE, SOURCE_META, MAP_FIELDS, DETAIL_FIELDS, lat, lon,
                      ranges=bd.ranges_from_dates(done))
@@ -265,15 +273,35 @@ def do_month(year: int, month: int, days: list[int], upload: bool, remote: str, 
             for kind in ("days", "detail"):
                 for d in dates:
                     (OUT / SOURCE / kind / d[:4] / f"{d}.bin.gz").unlink(missing_ok=True)
-    if not keep:
-        shutil.rmtree(folder, ignore_errors=True)
-    log(f"{year}-{month:02d}: {len(dates)} days built and verified ({size / 1e6:.1f} MB)"
-        + (", uploaded" if upload else ""))
+    log(f"{span}: {len(dates)} days built and verified ({size / 1e6:.1f} MB)" + (", uploaded" if upload else ""))
     return len(dates)
 
 
-def plan(start: date, end: date) -> list[tuple[int, int, list[int]]]:
-    """Months to fetch, each with the days still missing."""
+def do_chunk(chunk: tuple[int, list[int], list[int]], upload: bool, remote: str, keep: bool) -> int:
+    year, months, days = chunk
+    label = chunk_label(chunk)
+    folder = RAW / label
+    folder.mkdir(parents=True, exist_ok=True)
+    hourly = fetch("hourly", year, months, days, folder, label)       # strictly one request at a time
+    three = fetch("3hourly", year, months, days, folder, label)
+    n = sum(build_month(hourly, three, year, m, upload, remote, keep) for m in months)
+    hourly.close()
+    three.close()
+    if not keep:
+        shutil.rmtree(folder, ignore_errors=True)
+    return n
+
+
+def chunk_label(chunk: tuple[int, list[int], list[int]]) -> str:
+    year, months, days = chunk
+    if len(months) == 1:
+        return f"{year}-{months[0]:02d}" + ("" if days == list(range(1, 32)) else f"-{days[0]:02d}..{days[-1]:02d}")
+    return f"{year}-{months[0]:02d}..{months[-1]:02d}"
+
+
+def plan(start: date, end: date) -> list[tuple[int, list[int], list[int]]]:
+    """Requests to send: (year, months, days). Complete missing months of a year share one
+    request; a partly missing month gets a request of its own for just those days."""
     have = set(load_state()["days"])
     todo: dict[tuple[int, int], list[int]] = {}
     d = start
@@ -281,23 +309,46 @@ def plan(start: date, end: date) -> list[tuple[int, int, list[int]]]:
         if d.isoformat() not in have:
             todo.setdefault((d.year, d.month), []).append(d.day)
         d += timedelta(days=1)
-    return [(y, m, days) for (y, m), days in sorted(todo.items())]
+    full: dict[int, list[int]] = {}
+    partial = []
+    for (y, m), days in sorted(todo.items()):
+        month_len = ((date(y + m // 12, m % 12 + 1, 1)) - date(y, m, 1)).days
+        if len(days) == month_len:
+            full.setdefault(y, []).append(m)
+        else:
+            partial.append((y, [m], days))
+    chunks = [(y, ms, list(range(1, 32))) for y, ms in full.items()] + partial
+    return sorted(chunks, key=lambda c: (c[0], c[1][0]))
 
 
 def run(start: date, end: date, upload: bool, remote: str, keep: bool) -> None:
-    months = plan(start, end)
-    log(f"ERA5 {start}..{end}: {sum(len(m[2]) for m in months)} days in {len(months)} months to do, "
-        f"upload={'on' if upload else 'off'}")
+    chunks = plan(start, end)
+    total = sum(len(chunk_dates(c)) for c in chunks)
+    log(f"ERA5 {start}..{end}: {total} days in {len(chunks)} requests to do "
+        f"({', '.join(chunk_label(c) for c in chunks)}), upload={'on' if upload else 'off'}")
     t0 = time.time()
-    for n, (y, m, days) in enumerate(months, 1):
+    for n, chunk in enumerate(chunks, 1):
         if STOP.exists():
             STOP.unlink()
             log("stop file found; stopping cleanly")
             return
-        do_month(y, m, days, upload, remote, keep)   # an error stops the run (re-run to resume)
-        left = (len(months) - n) * (time.time() - t0) / n
-        log(f"{n}/{len(months)} months done; about {left / 3600:.1f} h left at this pace")
+        do_chunk(chunk, upload, remote, keep)   # an error stops the run (re-run to resume)
+        left = (len(chunks) - n) * (time.time() - t0) / n
+        log(f"{n}/{len(chunks)} requests done; about {left / 3600:.1f} h left at this pace")
     log("ERA5 run finished")
+
+
+def chunk_dates(chunk: tuple[int, list[int], list[int]]) -> list[date]:
+    """The real dates a chunk covers."""
+    year, months, days = chunk
+    out = []
+    for m in months:
+        for d in days:
+            try:
+                out.append(date(year, m, d))
+            except ValueError:
+                pass
+    return out
 
 
 if __name__ == "__main__":
