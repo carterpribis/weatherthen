@@ -211,6 +211,8 @@ button, input, select { font: inherit; color: inherit; }
 .r-source { font-size: 12px; color: var(--muted); margin: 8px 0 0; border-left: 2px solid rgba(255, 255, 255, 0.15); padding-left: 8px; }
 .r-source b { color: var(--text); font-weight: 600; }
 .r-source a, .st-name a { color: var(--text); }
+.r-tip { font-size: 12px; color: var(--muted); margin: 14px 0 2px; }
+.r-tip a { color: var(--text); }
 .st-name a { text-decoration: none; }
 .st-name a:hover { text-decoration: underline; }
 .links .src { font-size: 12px; }

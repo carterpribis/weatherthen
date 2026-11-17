@@ -293,7 +293,8 @@ function renderReportShell() {
     </div>
     <section id="r-model" class="r-section"><p class="r-loading">${state.playing ? 'Pause to load this day’s weather.' : 'Loading the weather…'}</p></section>
     <section id="r-stations" class="r-section"></section>
-    <section id="r-archives" class="r-section"></section>`;
+    <section id="r-archives" class="r-section"></section>
+    <p class="r-tip">Find this useful? <a href="https://ko-fi.com/carterpribis" target="_blank" rel="noopener">Tip jar</a></p>`;
 }
 
 async function loadReport() {
