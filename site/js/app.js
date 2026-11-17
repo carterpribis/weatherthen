@@ -22,15 +22,14 @@ const els = {
   aboutOpen: $('about-open'), aboutClose: $('about-close'), reset: $('reset'), legend: $('legend'),
   search: $('place-search'), results: $('place-results'), report: $('report'),
   reportBody: $('report-body'), reportClose: $('report-close'), notice: $('notice'),
-  welcome: $('welcome'), welcomeDate: $('welcome-date'), welcomeGo: $('welcome-go'),
-  welcomeSkip: $('welcome-skip'),
+  welcome: $('welcome'),
 };
 
 const state = {
   date: DEFAULT_DATE, place: null, playing: false, fahrenheit: true, pointer: null, layer: 'temp',
   dayLoaded: null, reportTimer: 0, reportToken: 0,
 };
-let manifest, map, picker, welcomePicker;
+let manifest, map, picker;
 
 function markUnits() {
   document.querySelectorAll('.unit-toggle button').forEach((b) =>
@@ -67,7 +66,7 @@ async function main() {
     const p = pointPlace(lat, lon);
     setPlace({ ...p, label: q.get('place') || p.label, countryCode: q.get('cc') || null }, { fly: true, instant: true });
   }
-  if (!q.get('date') && !state.place) showWelcome();
+  if (!state.place) els.welcome.hidden = false;   // first step, until a place is picked
   await show(clampDate(q.get('date')) || DEFAULT_DATE);
   setStatus('');
 }
@@ -264,7 +263,7 @@ function setPlace(place, { fly = false, instant = false } = {}) {
   updateNotice();
   updateUrl();
   scheduleReport(0);
-  hideWelcome();
+  if (place) hideWelcome();
 }
 
 /** Map padding that keeps a place clear of the report (side panel on desktop, sheet on phones). */
@@ -491,14 +490,6 @@ function precipKind(s) {
   return s.snow_frac >= 0.15 ? 'rain & snow' : 'rain';
 }
 
-// ---- welcome ---------------------------------------------------------------------------------
-
-function showWelcome() {
-  els.welcome.hidden = false;
-  welcomePicker ??= datePicker(els.welcomeDate, { label: 'Your birthday' });
-  welcomePicker.set(`${+today().slice(0, 4) - 30}-01-01`);
-}
-
 function hideWelcome() {
   els.welcome.hidden = true;
 }
@@ -526,14 +517,6 @@ function setupMisc() {
   els.aboutClose.addEventListener('click', () => els.about.close());
   els.about.addEventListener('click', (e) => { if (e.target === els.about) els.about.close(); });
 
-  els.welcomeGo.addEventListener('click', () => {
-    const d = clampDate(welcomePicker?.get());
-    hideWelcome();
-    if (d) show(d);
-    els.search.focus();
-    els.search.placeholder = 'Where were you born?';
-  });
-  els.welcomeSkip.addEventListener('click', hideWelcome);
 
   // Mouse hover shows a readout; a click or tap (not a drag) picks that spot as the place.
   map.onHover((lonlat, point) => {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Weather Then</title>
+  <title>Weather/Then</title>
   <meta name="description" content="Look up the weather for any place on any day since 1836, from yesterday back to the 19th century.">
   <meta name="color-scheme" content="dark">
   <link rel="stylesheet" href="vendor/maplibre-gl-6.18.0/maplibre-gl.css">
@@ -17,7 +17,7 @@
   <div class="left-col">
     <header class="panel title-card">
       <div class="title-row">
-        <h1>Weather Then</h1>
+        <h1>Weather/Then</h1>
         <div class="unit-toggle" role="group" aria-label="Units">
           <button type="button" data-units="F" aria-pressed="true" title="Fahrenheit, inches, mph">°F</button>
           <button type="button" data-units="C" aria-pressed="false" title="Celsius, millimetres, km/h">°C</button>
@@ -30,6 +30,7 @@
           role="combobox" aria-expanded="false" aria-controls="place-results" aria-autocomplete="list" aria-label="Search for a place">
         <ul id="place-results" class="results" role="listbox" hidden></ul>
       </div>
+      <p id="welcome" class="hint" hidden>Search for a place or click the map to see its weather. Change the day in the date bar below.</p>
     </header>
 
     <aside id="report" class="panel report" hidden aria-label="Weather for the chosen place">
@@ -37,17 +38,6 @@
       <div id="report-body"></div>
     </aside>
   </div>
-
-  <div id="welcome" class="panel welcome" hidden>
-    <h2>What was the weather the day you were born?</h2>
-    <p>Pick a date, then a place. Any day from 1836 to today works.</p>
-    <div class="welcome-row">
-      <div id="welcome-date"></div>
-      <button id="welcome-go" type="button" class="primary">Next: choose a place</button>
-    </div>
-    <button id="welcome-skip" type="button" class="link">Or explore the Great Blizzard of 1888</button>
-  </div>
-
   <p id="notice" class="notice" hidden></p>
 
   <details id="legend" class="panel legend" open>

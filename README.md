@@ -1,4 +1,4 @@
-# Weather Then
+# Weather/Then
 
 Look up the weather for any place on any day from 1836 to today. It has a world weather map for each day and a place report built from weather models and the readings stations took at the time.
 
