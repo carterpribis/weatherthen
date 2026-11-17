@@ -66,3 +66,7 @@ Then open http://localhost:8788. Keyboard: ← and → change the day, and space
 ## Who wrote what
 
 The pipeline and site code were written by Claude Code (Anthropic) working with Carter Pribis, who directed the project and its design decisions.
+
+## Copyright
+
+© 2026 Carter Pribis. All rights reserved. The code is shared here to read, not licensed for reuse: please don't copy, redistribute or redeploy it, in whole or in part, without permission. The weather data comes from NOAA, ECMWF/Copernicus, Open-Meteo and OpenStreetMap under their own terms.
