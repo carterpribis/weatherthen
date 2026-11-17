@@ -105,9 +105,9 @@ export class WeatherMap {
       layout: { visibility: 'none' },
       paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
     });
-    map.addLayer(raster('wx-temp', 'wx-temp', 0.72), firstLine);
-    map.addLayer(raster('wx-precip', 'wx-precip', 0.9), firstLine);
-    map.addLayer(raster('wx-veil', 'wx-veil', 1), firstLine);
+    map.addLayer(raster('wx-temp', 'wx-temp', 0.5), firstLine);
+    map.addLayer(raster('wx-precip', 'wx-precip', 0.7), firstLine);
+    map.addLayer(raster('wx-veil', 'wx-veil', 0.75), firstLine);
 
     map.addSource('wx-isobars', { type: 'geojson', data: EMPTY });
     map.addLayer({
@@ -118,7 +118,7 @@ export class WeatherMap {
     map.addLayer({
       id: 'wx-isobars', type: 'line', source: 'wx-isobars',
       layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': '#15161c', 'line-opacity': 0.85, 'line-width': ['case', ['get', 'major'], 1.9, 1.1] },
+      paint: { 'line-color': '#15161c', 'line-opacity': 0.65, 'line-width': ['case', ['get', 'major'], 1.9, 1.1] },
     }, firstLabel);
 
     map.addSource('wx-centres', { type: 'geojson', data: EMPTY });
@@ -149,7 +149,7 @@ export class WeatherMap {
     // ...and roads and railways a little quieter, so they don't compete with the weather.
     for (const l of layers) {
       if (l.type === 'line' && /^(highway|road|railway|tunnel|bridge)/.test(l.id)) {
-        map.setPaintProperty(l.id, 'line-opacity', 0.55);
+        map.setPaintProperty(l.id, 'line-opacity', 0.8);
       }
     }
     this.layersReady = true;
