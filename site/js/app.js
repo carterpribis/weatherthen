@@ -137,8 +137,7 @@ function updateSource(src) {
 
 function updateNotice() {
   if (hasMap(manifest, state.date)) { els.notice.hidden = true; return; }
-  els.notice.innerHTML = `No weather map for this date yet (maps so far: ${coverageLabel(manifest)}).` +
-    (state.place ? '' : ' <b>Search for a place</b> or tap the map to see that day’s weather.');
+  els.notice.textContent = `No map for this date yet (maps so far: ${coverageLabel(manifest)}).`;
   els.notice.hidden = false;
 }
 
@@ -316,7 +315,7 @@ async function loadReport() {
     if (stale()) return;
     modelEl.innerHTML = reanalysisHtml(place, day, detail);
   } else {
-    modelEl.innerHTML = '<p class="r-note">Model weather for this date isn’t available yet (it starts in 1940; earlier years are being added). The station records below are the best source for this day.</p>';
+    modelEl.innerHTML = '<p class="r-note">No model data for this date yet.</p>';
   }
 
   // 2. Station records
@@ -341,9 +340,9 @@ function modelHtml(m) {
   }
   const source = m.source === 'era5'
     ? sourceLine('ERA5 reanalysis by ECMWF / Copernicus, via Open-Meteo', 'https://open-meteo.com/en/docs/historical-weather-api',
-      'A model reconstruction on a ~25 km grid that combines millions of observations from stations, balloons, aircraft, ships and satellites; values are averages over the grid square, not a single thermometer.')
+      'Model reconstruction, ~25 km grid.')
     : sourceLine('Recent weather-model data, via Open-Meteo', 'https://open-meteo.com/en/docs',
-      'Model analyses and forecasts for the last few months; values may still be revised.');
+      'Recent model data; may still be revised.');
   const partial = state.date === today() ? '<p class="r-note">Today includes forecast hours.</p>' : '';
   return `
     <div class="r-summary">
@@ -355,7 +354,7 @@ function modelHtml(m) {
     </div>
     <dl class="r-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
     <figure class="r-chart"><svg id="r-hourly" role="img" aria-label="Hourly temperature and precipitation"></svg>
-      <figcaption>Hour by hour, local time (${esc(m.timezone || '')}): temperature line, precipitation bars.</figcaption></figure>
+</figure>
     ${partial}${source}`;
 }
 
@@ -394,7 +393,7 @@ function reanalysisHtml(place, day, detail) {
     <div class="r-summary">${head}</div>
     <dl class="r-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
     ${sourceLine('NOAA-CIRES-DOE 20th Century Reanalysis v3', 'https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html',
-      'A model reconstruction for this area (about 110 km grid), not a measurement: it rebuilds the weather from historical air-pressure readings taken at stations and on ships, plus sea-surface temperatures and sea ice. It is run 80 times; ± shows how much the runs disagree.')}`;
+      'Model reconstruction from historical pressure readings, ~110 km grid. ± is the spread of its 80 runs.')}`;
 }
 
 function stationsHtml(list, date) {
@@ -402,8 +401,8 @@ function stationsHtml(list, date) {
   if (!list.length) {
     const recent = daysBetween(date, today()) < 30;
     return head + `<p class="r-note">${recent
-      ? 'No station records nearby yet. NOAA usually publishes them within a few days to weeks.'
-      : 'No NOAA station records within about 150 km for this day.'}</p>`;
+      ? 'No station records yet; NOAA adds them after a few days.'
+      : 'No station records within about 150 km.'}</p>`;
   }
   const rows = list.map((s) => {
     const bits = [];
@@ -418,7 +417,7 @@ function stationsHtml(list, date) {
   }).join('');
   return head + `<ul class="stations">${rows}</ul>` + sourceLine('NOAA NCEI, Global Historical Climatology Network – Daily (GHCN-Daily)',
     'https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily',
-    'Readings taken at the time by weather observers and stations, as archived by NOAA. Station names are current names; some locations moved over the years.');
+    '');
 }
 
 function archivesHtml(place, date) {
@@ -429,10 +428,10 @@ function archivesHtml(place, date) {
   const next = addDays(date, 1);
   if (next >= '1770-01-01' && next <= '1963-12-31') {
     const url = `https://www.loc.gov/collections/chronicling-america/?dl=page&end_date=${next}&ops=AND&qs=weather&searchType=advanced&start_date=${next}`;
-    links.push(`<li><a href="${url}" target="_blank" rel="noopener">Newspapers from the next day</a> that mention the weather. <span class="src">Source: Library of Congress, Chronicling America.</span></li>`);
+    links.push(`<li><a href="${url}" target="_blank" rel="noopener">Next day’s newspapers</a> <span class="src">(Library of Congress)</span></li>`);
   }
   if (date >= '1871-01-01' && date <= '2002-12-31') {
-    links.push(`<li><a href="https://library.noaa.gov/weather-climate/daily-weather-maps" target="_blank" rel="noopener">US Weather Bureau daily weather maps</a>: the official map and forecast for this day (browse to the date). <span class="src">Source: NOAA Central Library.</span></li>`);
+    links.push(`<li><a href="https://library.noaa.gov/weather-climate/daily-weather-maps" target="_blank" rel="noopener">US Weather Bureau daily maps</a> <span class="src">(NOAA Central Library)</span></li>`);
   }
   return links.length ? `<h3>From the archives</h3><ul class="links">${links.join('')}</ul>` : '';
 }
@@ -479,8 +478,8 @@ function setLayer(layer) {
   $('legend-temp').hidden = precip;
   $('legend-precip').hidden = !precip;
   $('legend-title').textContent = precip
-    ? 'Rain and snow that day'
-    : 'Daily average, 2 m above ground';
+    ? 'Rain and snow'
+    : 'Daily average temperature';
   map.setLayer(layer);
   if (precip && state.dayLoaded && !map.detail) {
     const date = state.dayLoaded;
@@ -540,7 +539,7 @@ function updateTip() {
   if (!s) { tip.hidden = true; return; }
   const [lon, lat] = lonlat;
   tip.innerHTML = `
-    <div class="tip-place">${fmtLat(lat)}, ${fmtLon(lon)} <span>· click for this place</span></div>
+    <div class="tip-place">${fmtLat(lat)}, ${fmtLon(lon)}</div>
     <div class="tip-row"><span>Temperature</span><b>${fmtTemp(s.t2m)}</b>${pm(s.t2m_spread, fmtDelta) || '<small></small>'}</div>
     <div class="tip-row"><span>Pressure</span><b>${s.prmsl.toFixed(0)} hPa</b>${pm(s.prmsl_spread, (v) => v.toFixed(1)) || '<small></small>'}</div>` +
     (s.precip != null ? `<div class="tip-row"><span>Precip.</span><b>${fmtMm(s.precip)}</b><small>${precipKind(s)}</small></div>` : '');
@@ -615,7 +614,7 @@ const fmtLat = (v) => `${Math.abs(v).toFixed(1)}°${v >= 0 ? 'N' : 'S'}`;
 const fmtLon = (v) => `${Math.abs(v).toFixed(1)}°${v >= 0 ? 'E' : 'W'}`;
 /** "Source: <name>" with a link and a one-line note on what kind of data it is. */
 function sourceLine(name, url, note) {
-  return `<p class="r-source"><b>Source:</b> <a href="${url}" target="_blank" rel="noopener">${name}</a>.${note ? ` ${note}` : ''}</p>`;
+  return `<p class="r-source"><b>Source:</b> <a href="${url}" target="_blank" rel="noopener">${name}</a>${note ? `. ${note}` : ''}</p>`;
 }
 
 /** ' ± x' as a <small>, or '' when the source has no ensemble spread. */

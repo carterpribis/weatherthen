@@ -30,7 +30,7 @@
           role="combobox" aria-expanded="false" aria-controls="place-results" aria-autocomplete="list" aria-label="Search for a place">
         <ul id="place-results" class="results" role="listbox" hidden></ul>
       </div>
-      <p id="welcome" class="hint" hidden>Search for a place or click the map to see its weather. Change the day in the date bar below.</p>
+      <p id="welcome" class="hint" hidden>Search for a place or click the map.</p>
     </header>
 
     <aside id="report" class="panel report" hidden aria-label="Weather for the chosen place">
@@ -48,7 +48,7 @@
         <label><input type="radio" name="layer" value="precip"><span>Rain &amp; snow</span></label>
       </div>
       <div class="legend-head">
-        <span id="legend-title">Daily average, 2 m above ground</span>
+        <span id="legend-title">Daily average temperature</span>
       </div>
       <div id="legend-temp">
         <canvas id="legend-bar" width="220" height="12"></canvas>
@@ -59,17 +59,17 @@
         <div class="precip-row"><span>Snow</span><canvas id="legend-snow" width="180" height="10"></canvas></div>
         <div class="precip-row"><span>Freezing rain</span><canvas id="legend-frz" width="180" height="10"></canvas></div>
         <div id="legend-precip-ticks" class="legend-ticks precip-ticks"></div>
-        <p class="legend-note">How much fell that day, measured as a depth of water. Snow is counted as the water it melts to (about a tenth of its depth). Darker means more; dry areas are left clear.</p>
+        <p class="legend-note">Daily total as water; snow counted melted.</p>
       </div>
 
       <p class="legend-note"><svg width="28" height="10" aria-hidden="true"><path d="M1 7 Q8 1 14 5 T27 3" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="3.4"/><path d="M1 7 Q8 1 14 5 T27 3" fill="none" stroke="#111" stroke-width="1.4"/></svg>
-        Isobars every 4 hPa, bold every 20. <b class="hl-l">L</b> and <b class="hl-h">H</b> mark pressure centres.</p>
+        Isobars every 4 hPa. <b class="hl-l">L</b> low, <b class="hl-h">H</b> high pressure.</p>
 
       <label class="toggle">
         <input id="uncertainty" type="checkbox">
         <span>Show uncertainty</span>
       </label>
-      <p id="veil-key" class="legend-note" hidden>Darker areas are where the 80 runs of the reconstruction disagree, mostly where few ships or stations reported. Clear: under 2 hPa of spread. Darkest: 10 hPa or more.</p>
+      <p id="veil-key" class="legend-note" hidden>Darker means less certain.</p>
 
     </div>
   </details>
