@@ -1,145 +1,208 @@
-// Canvas map: temperature or rain/snow colours, uncertainty veil, coastlines, isobars,
-// H/L centres.
+// The map: a MapLibre base map (OpenFreeMap "Positron", OpenStreetMap data) with the
+// weather drawn into it.
 //
-// World coordinates are plain degrees: x = longitude, y = -latitude. The map is
-// equirectangular, so a linear canvas transform maps world -> screen, and the
-// 1° data grid can be drawn as an image without reprojection.
+// Layer order, bottom to top:
+//   base map land, water and parks
+//   weather colours (temperature or rain/snow), then the uncertainty veil
+//   base map roads, rivers and borders
+//   isobars
+//   base map labels (towns, states, countries)
+//   H/L pressure centres
+//
+// The weather grid is regular in latitude/longitude, but the map is Web Mercator, so
+// the colour layers are painted into canvases whose rows are spaced in Mercator y.
+// The canvases are then shown as MapLibre canvas sources covering the Mercator world
+// (85.05°S to 85.05°N).
 
+import * as maplibregl from '../vendor/maplibre-gl-6.18.0/maplibre-gl.mjs';
 import {
   tempLut, tempIndex, VEIL_FROM, VEIL_TO, VEIL_MAX_ALPHA, precipIndex, rainRamp, snowRamp, frzRamp,
 } from './colors.js';
 import { sampleGrid } from './data.js';
 
-const UPSAMPLE = 4;              // raster pixels per grid cell
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
+const MERC_MAX_LAT = 85.051129;
+const RASTER_W = 1440;           // 4 pixels per degree of longitude
+const RASTER_H = 1440;           // square: the Mercator world is square
 const ISOBAR_STEP = 4;           // hPa
 const SMOOTH_PASSES = 2;         // light smoothing before contouring
 const CONTOUR_OFFSET = 0.5;      // d3-contour puts value i at coordinate i + 0.5
+const CONTOUR_UPSAMPLE = 2;      // trace isobars on a 2x finer interpolated grid (smoother curves;
+                                 // 3x looks marginally better but costs ~150 ms a day during playback)
 const EXTREMA_RADIUS = 5;        // grid cells: must be the lowest/highest within this
 const EXTREMA_PROMINENCE = 5;    // hPa: and stand out this much within twice the radius
 const MAX_CENTRES = 30;
 const HOME = [-35, 30];          // lon, lat at the centre of the starting view
+const MAX_ZOOM = 9;              // the weather grid is ~110 km; past this it's all base map
+
+const CORNERS = [[-180, MERC_MAX_LAT], [180, MERC_MAX_LAT], [180, -MERC_MAX_LAT], [-180, -MERC_MAX_LAT]];
+const EMPTY = { type: 'FeatureCollection', features: [] };
 
 export class WeatherMap {
-  constructor(canvas, manifest, land) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+  constructor(container, manifest) {
+    this.container = container;
     this.g = manifest.grid;
-    this.transform = d3.zoomIdentity;
     this.day = null;
-    this.showUncertainty = false;
-    this.layer = 'temp';           // 'temp' or 'precip'
     this.detail = null;
-    this.onChange = null;          // called after pan/zoom
-    this.pending = false;
-
-    this.coast = worldPath(topojson.feature(land, land.objects.land));
-    this.graticule = worldPath(d3.geoGraticule().step([30, 30])());
-
-    const { nx, ny } = this.g;
-    this.rw = nx * UPSAMPLE;
-    this.rh = (ny - 1) * UPSAMPLE + 1;
-    this.raster = makeCanvas(this.rw, this.rh);
-    this.veil = makeCanvas(this.rw, this.rh);
-    this.precipRaster = makeCanvas(this.rw, this.rh);
+    this.layer = 'temp';          // 'temp' or 'precip'
+    this.showUncertainty = false;
     this.veilFor = null;
-    this.cols = columnSampler(nx, UPSAMPLE, this.rw);
+    this.onChange = null;          // called after the view moves
+    this.hoverFn = null;
+    this.pickFn = null;
+    this.marker = null;
 
-    this.zoom = d3.zoom()
-      .scaleExtent([1, 24])
-      .on('zoom', (e) => {
-        this.transform = e.transform;
-        this.requestDraw();
-        this.onChange?.();
-      });
-    d3.select(canvas).call(this.zoom);
+    this.raster = makeCanvas(RASTER_W, RASTER_H);
+    this.precipRaster = makeCanvas(RASTER_W, RASTER_H);
+    this.veil = makeCanvas(RASTER_W, RASTER_H);
+    this.sampler = mercatorSampler(this.g);
 
-    new ResizeObserver(() => this.resize()).observe(canvas);
-    this.resize();
+    this.map = new maplibregl.Map({
+      container,
+      style: STYLE_URL,
+      center: HOME,
+      zoom: this.homeZoom(),
+      minZoom: 0,
+      maxZoom: MAX_ZOOM,
+      renderWorldCopies: false,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+      attributionControl: false,   // credited in the page footer instead
+    });
+    this.map.touchZoomRotate.disableRotation();
+    this.map.keyboard.disableRotation();
+
+    this.ready = new Promise((resolve, reject) => {
+      this.map.once('load', () => { this.addWeatherLayers(); resolve(); });
+      this.map.once('error', (e) => { if (!this.map.loaded()) reject(e.error || new Error('map failed to load')); });
+    });
+
+    this.map.on('move', () => this.onChange?.());
+    this.map.on('mousemove', (e) => this.hoverFn?.([e.lngLat.lng, e.lngLat.lat], e.point));
+    this.map.on('mouseout', () => this.hoverFn?.(null, null));
+    this.map.on('click', (e) => this.pickFn?.(e.lngLat.lng, e.lngLat.lat));
   }
 
-  // ---- view ----------------------------------------------------------------
+  onHover(fn) { this.hoverFn = fn; }
+  onPick(fn) { this.pickFn = fn; }
 
-  resize() {
-    const W = this.canvas.clientWidth, H = this.canvas.clientHeight;
-    if (!W || !H) return;
-    this.W = W; this.H = H;
-    this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.round(W * this.dpr);
-    this.canvas.height = Math.round(H * this.dpr);
-    // Cover the screen: the map is at least as tall and as wide as the window.
-    this.s0 = Math.max(W / 360, H / 180);
-    const hw = 180 * this.s0, hh = 90 * this.s0;
-    this.zoom
-      .extent([[0, 0], [W, H]])
-      .translateExtent([[W / 2 - hw, H / 2 - hh], [W / 2 + hw, H / 2 + hh]]);
-    const first = !this.sized;
-    this.sized = true;
-    d3.select(this.canvas).call(this.zoom.transform, this.clamp(first ? this.home() : this.transform));
-    this.draw();
+  // ---- layers ------------------------------------------------------------------------
+
+  addWeatherLayers() {
+    const map = this.map;
+    const layers = map.getStyle().layers;
+    // Weather colours go above land/water fills, below roads, rivers, borders and labels.
+    const firstLine = layers.find((l) => l.type === 'line' || l.type === 'symbol')?.id;
+    const firstLabel = layers.find((l) => l.type === 'symbol')?.id;
+
+    const canvasSource = (canvas) => ({ type: 'canvas', canvas, coordinates: CORNERS, animate: false });
+    map.addSource('wx-temp', canvasSource(this.raster));
+    map.addSource('wx-precip', canvasSource(this.precipRaster));
+    map.addSource('wx-veil', canvasSource(this.veil));
+    const raster = (id, source, opacity) => ({
+      id, type: 'raster', source,
+      layout: { visibility: 'none' },
+      paint: { 'raster-opacity': opacity, 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
+    });
+    map.addLayer(raster('wx-temp', 'wx-temp', 0.72), firstLine);
+    map.addLayer(raster('wx-precip', 'wx-precip', 0.9), firstLine);
+    map.addLayer(raster('wx-veil', 'wx-veil', 1), firstLine);
+
+    map.addSource('wx-isobars', { type: 'geojson', data: EMPTY });
+    map.addLayer({
+      id: 'wx-isobars-halo', type: 'line', source: 'wx-isobars',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-opacity': 0.35, 'line-width': ['case', ['get', 'major'], 3.6, 2.8] },
+    }, firstLabel);
+    map.addLayer({
+      id: 'wx-isobars', type: 'line', source: 'wx-isobars',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#15161c', 'line-opacity': 0.85, 'line-width': ['case', ['get', 'major'], 1.9, 1.1] },
+    }, firstLabel);
+
+    map.addSource('wx-centres', { type: 'geojson', data: EMPTY });
+    map.addLayer({
+      id: 'wx-centres', type: 'symbol', source: 'wx-centres',
+      layout: {
+        'text-field': ['format',
+          ['get', 'kind'], { 'font-scale': 1 },
+          '\n', {},
+          ['to-string', ['get', 'value']], { 'font-scale': 0.55, 'text-color': '#15161c' }],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 22,
+        'text-line-height': 0.95,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      },
+      paint: {
+        'text-color': ['match', ['get', 'kind'], 'L', '#b3122e', '#123fa8'],
+        'text-halo-color': 'rgba(255,255,255,0.9)',
+        'text-halo-width': 2,
+      },
+    });
+
+    // Make state and country borders a little stronger over the weather colours.
+    for (const [id, color] of [['boundary_3', 'rgba(70,72,84,0.55)'], ['boundary_2', 'rgba(45,46,56,0.75)']]) {
+      if (map.getLayer(id)) map.setPaintProperty(id, 'line-color', color);
+    }
+    // ...and roads and railways a little quieter, so they don't compete with the weather.
+    for (const l of layers) {
+      if (l.type === 'line' && /^(highway|road|railway|tunnel|bridge)/.test(l.id)) {
+        map.setPaintProperty(l.id, 'line-opacity', 0.55);
+      }
+    }
+    this.layersReady = true;
+    this.refresh();
   }
 
-  /** Keep a transform inside the map edges (zoom.transform doesn't do this itself). */
-  clamp(t) {
-    return this.zoom.constrain()(t, [[0, 0], [this.W, this.H]], this.zoom.translateExtent());
+  /** Show or hide layers to match the current day, colour layer and uncertainty setting. */
+  refresh() {
+    if (!this.layersReady) return;
+    const map = this.map;
+    const has = !!this.day;
+    const vis = (id, on) => map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
+    vis('wx-temp', has && this.layer === 'temp');
+    vis('wx-precip', has && this.layer === 'precip' && !!this.detail);
+    const veil = has && this.showUncertainty && !!this.day.fields.prmsl_spread;
+    if (veil && this.veilFor !== this.day) {
+      this.paintMulti(this.veil, [this.day.fields.prmsl_spread], veilPixel);
+      this.veilFor = this.day;
+      pushCanvas(map, 'wx-veil');
+    }
+    vis('wx-veil', veil);
+    if (!has) {
+      map.getSource('wx-isobars').setData(EMPTY);
+      map.getSource('wx-centres').setData(EMPTY);
+    }
   }
 
-  /** Starting view: whole-map zoom, centred on the Atlantic. */
-  home() {
-    const bx = this.s0 * HOME[0] + this.W / 2, by = -this.s0 * HOME[1] + this.H / 2;
-    return this.clamp(d3.zoomIdentity.translate(this.W / 2 - bx, this.H / 2 - by));
-  }
-
-  /** Screen point -> [lon, lat], or null outside the world. */
-  toLonLat(x, y) {
-    const t = this.transform;
-    const lon = (t.invertX(x) - this.W / 2) / this.s0;
-    const lat = -(t.invertY(y) - this.H / 2) / this.s0;
-    return lon < -180 || lon > 180 || lat < -90 || lat > 90 ? null : [lon, lat];
-  }
-
-  toScreen(lon, lat) {
-    const t = this.transform;
-    return [t.applyX(this.s0 * lon + this.W / 2), t.applyY(-this.s0 * lat + this.H / 2)];
-  }
-
-  /** Animate so (lon, lat) sits at screen point `at` (default: centre) at zoom k (1 = whole map). */
-  flyTo(lon, lat, k, at) {
-    d3.select(this.canvas).transition().duration(900).call(this.zoom.transform, this.viewAt(lon, lat, k, at));
-  }
-
-  jumpTo(lon, lat, k, at) {
-    d3.select(this.canvas).call(this.zoom.transform, this.viewAt(lon, lat, k, at));
-  }
-
-  viewAt(lon, lat, k, at = [this.W / 2, this.H / 2]) {
-    const bx = this.s0 * lon + this.W / 2, by = -this.s0 * lat + this.H / 2;
-    return this.clamp(d3.zoomIdentity.translate(at[0], at[1]).scale(k).translate(-bx, -by));
-  }
-
-  resetView() {
-    d3.select(this.canvas).transition().duration(700).call(this.zoom.transform, this.home());
-  }
-
-  // ---- data ----------------------------------------------------------------
+  // ---- data ----------------------------------------------------------------------------
 
   /** Map fields for a day, plus (optionally) its detail fields for the rain/snow layer. */
   setDay(day, detail = null) {
     this.day = day;
-    this.paintRaster(this.raster, day.fields.t2m, temperaturePixel);
     this.veilFor = null;
+    this.paintMulti(this.raster, [day.fields.t2m], temperaturePixel);
     const p = smooth(day.fields.prmsl, this.g.nx, this.g.ny, SMOOTH_PASSES);
-    this.isobars = this.buildIsobars(p);
-    this.centres = this.findCentres(p, day.fields.prmsl_spread);
+    const isobars = this.buildIsobars(p);
+    const centres = this.findCentres(p, day.fields.prmsl_spread);
     this.detail = null;
     if (detail) this.paintDetail(detail);
-    this.draw();
+    if (!this.layersReady) return;
+    pushCanvas(this.map, 'wx-temp');
+    if (this.detail) pushCanvas(this.map, 'wx-precip');
+    this.map.getSource('wx-isobars').setData(isobars);
+    this.map.getSource('wx-centres').setData(centres);
+    this.refresh();
   }
 
   /** Detail fields arriving after the day (e.g. when switching to the rain/snow layer). */
   setDetail(detail) {
     if (!this.day || detail.date !== this.day.date) return;
     this.paintDetail(detail);
-    this.draw();
+    if (this.layersReady) pushCanvas(this.map, 'wx-precip');
+    this.refresh();
   }
 
   paintDetail(detail) {
@@ -148,22 +211,22 @@ export class WeatherMap {
     this.paintMulti(this.precipRaster, [f.precip, f.snow_frac, f.frz_frac], precipPixel);
   }
 
-  setLayer(layer) {
-    this.layer = layer;
-    this.draw();
-  }
-
-  /** No map data for the current date: show coastlines on a plain background. */
+  /** No map data for the current date: just the base map. */
   clearDay() {
     this.day = null;
     this.detail = null;
     this.veilFor = null;
-    this.draw();
+    this.refresh();
+  }
+
+  setLayer(layer) {
+    this.layer = layer;
+    this.refresh();
   }
 
   setUncertainty(on) {
     this.showUncertainty = on;
-    this.draw();
+    this.refresh();
   }
 
   /** Bilinear value of every map field (and detail field, if loaded) at (lon, lat). */
@@ -174,69 +237,82 @@ export class WeatherMap {
     return out;
   }
 
-  // Upsample a grid field into an offscreen canvas, colouring each pixel.
-  paintRaster(canvas, field, pixel) {
-    this.paintMulti(canvas, [field], (d, o, v) => pixel(d, o, v[0]));
-  }
-
-  // Same, for a colour that depends on several fields at once.
+  // Paint a canvas in Mercator rows from one or more grid fields (bilinear).
   paintMulti(canvas, fields, pixel) {
-    const { nx, ny } = this.g;
-    const { rw, rh } = this;
+    const { nx } = this.g;
     const ctx = canvas.getContext('2d');
-    const img = ctx.createImageData(rw, rh);
+    const img = ctx.createImageData(RASTER_W, RASTER_H);
     const d = img.data;
-    const { i0, i1, fx } = this.cols;
+    const { i0, i1, fx, r0, r1, fy } = this.sampler;
     const k = fields.length;
     const vals = new Float64Array(k);
-    for (let q = 0; q < rh; q++) {
-      const v = q / UPSAMPLE;
-      const j0 = Math.floor(v), j1 = Math.min(j0 + 1, ny - 1), fy = v - j0;
-      const r0 = j0 * nx, r1 = j1 * nx;
-      for (let p = 0; p < rw; p++) {
-        const a0 = r0 + i0[p], a1 = r0 + i1[p], b0 = r1 + i0[p], b1 = r1 + i1[p], w = fx[p];
+    for (let q = 0; q < RASTER_H; q++) {
+      const ra = r0[q] * nx, rb = r1[q] * nx, wy = fy[q];
+      for (let p = 0; p < RASTER_W; p++) {
+        const a0 = ra + i0[p], a1 = ra + i1[p], b0 = rb + i0[p], b1 = rb + i1[p], w = fx[p];
         for (let m = 0; m < k; m++) {
           const f = fields[m];
           const a = f[a0] + (f[a1] - f[a0]) * w;
           const b = f[b0] + (f[b1] - f[b0]) * w;
-          vals[m] = a + (b - a) * fy;
+          vals[m] = a + (b - a) * wy;
         }
-        pixel(d, (q * rw + p) * 4, vals);
+        pixel(d, (q * RASTER_W + p) * 4, vals);
       }
     }
     ctx.putImageData(img, 0, 0);
   }
 
+  /** Isobars as GeoJSON lines in lon/lat (MapLibre projects them). */
   buildIsobars(p) {
     const { nx, ny, lon0, lat0, dlon, dlat } = this.g;
-    // Repeat the first column at the end so lines join across the date line.
-    const w = nx + 1;
-    const ext = new Float64Array(w * ny);
-    for (let j = 0; j < ny; j++) for (let i = 0; i < w; i++) ext[j * w + i] = p[j * nx + (i % nx)];
+    // Contour a grid interpolated to CONTOUR_UPSAMPLE x the resolution, so lines curve
+    // smoothly when zoomed in. The extra column repeats the first one so lines join
+    // across the date line.
+    const U = CONTOUR_UPSAMPLE;
+    const w = nx * U + 1, h = (ny - 1) * U + 1;
+    const ext = new Float64Array(w * h);
+    for (let jj = 0; jj < h; jj++) {
+      const v = jj / U, j0 = Math.floor(v), j1 = Math.min(j0 + 1, ny - 1), fy = v - j0;
+      for (let ii = 0; ii < w; ii++) {
+        const u = ii / U, i0 = Math.floor(u) % nx, i1 = (i0 + 1) % nx, fx = u - Math.floor(u);
+        const a = p[j0 * nx + i0] + (p[j0 * nx + i1] - p[j0 * nx + i0]) * fx;
+        const b = p[j1 * nx + i0] + (p[j1 * nx + i1] - p[j1 * nx + i0]) * fx;
+        ext[jj * w + ii] = a + (b - a) * fy;
+      }
+    }
     const [lo, hi] = d3.extent(ext);
     const levels = d3.range(Math.ceil(lo / ISOBAR_STEP) * ISOBAR_STEP, hi, ISOBAR_STEP);
-    const minor = new Path2D(), major = new Path2D();
     const eps = 1e-6;
     const onEdge = (a, b) =>
       (a[0] <= eps && b[0] <= eps) || (a[0] >= w - eps && b[0] >= w - eps) ||
-      (a[1] <= eps && b[1] <= eps) || (a[1] >= ny - eps && b[1] >= ny - eps);
-    const toWorld = (pt) => [lon0 + (pt[0] - CONTOUR_OFFSET) * dlon, -(lat0 + (pt[1] - CONTOUR_OFFSET) * dlat)];
-
-    for (const c of d3.contours().size([w, ny]).thresholds(levels)(ext)) {
-      const path = c.value % 20 === 0 ? major : minor;
+      (a[1] <= eps && b[1] <= eps) || (a[1] >= h - eps && b[1] >= h - eps);
+    const toLonLat = (pt) => [
+      Math.min(180, Math.max(-180, lon0 + ((pt[0] - CONTOUR_OFFSET) / U) * dlon)),
+      Math.min(90, Math.max(-90, lat0 + ((pt[1] - CONTOUR_OFFSET) / U) * dlat)),
+    ];
+    const features = [];
+    for (const c of d3.contours().size([w, h]).thresholds(levels)(ext)) {
+      const lines = [];
       for (const polygon of c.coordinates) {
         for (const ring of polygon) {
-          let drawing = false;
+          let line = null;
           for (let k = 1; k < ring.length; k++) {
             const a = ring[k - 1], b = ring[k];
-            if (onEdge(a, b)) { drawing = false; continue; } // skip the grid border
-            if (!drawing) { path.moveTo(...toWorld(a)); drawing = true; }
-            path.lineTo(...toWorld(b));
+            if (onEdge(a, b)) { line = null; continue; } // skip the grid border
+            if (!line) { line = [toLonLat(a)]; lines.push(line); }
+            line.push(toLonLat(b));
           }
         }
       }
+      if (lines.length) {
+        features.push({
+          type: 'Feature',
+          properties: { value: c.value, major: c.value % 20 === 0 },
+          geometry: { type: 'MultiLineString', coordinates: lines.filter((l) => l.length > 1) },
+        });
+      }
     }
-    return { minor, major };
+    return { type: 'FeatureCollection', features };
   }
 
   // Pressure centres: local extremes that stand out from their surroundings.
@@ -272,132 +348,72 @@ export class WeatherMap {
         }
         const prominence = isMin ? hi - v : v - lo;
         if (prominence < EXTREMA_PROMINENCE) continue;
-        found.push({
-          kind: isMin ? 'L' : 'H', lon: lon0 + i * dlon, lat, prominence,
-          value: v, spread: spread ? spread[j * nx + i] : NaN,
-        });
+        found.push({ kind: isMin ? 'L' : 'H', lon: lon0 + i * dlon, lat, prominence, value: Math.round(v),
+          spread: spread ? spread[j * nx + i] : NaN });
       }
     }
-    return found.sort((a, b) => b.prominence - a.prominence).slice(0, MAX_CENTRES);
+    const top = found.sort((a, b) => b.prominence - a.prominence).slice(0, MAX_CENTRES);
+    return {
+      type: 'FeatureCollection',
+      features: top.map((c) => ({
+        type: 'Feature',
+        properties: { kind: c.kind, value: c.value },
+        geometry: { type: 'Point', coordinates: [c.lon, c.lat] },
+      })),
+    };
   }
 
-  // ---- drawing ---------------------------------------------------------------
+  // ---- view ------------------------------------------------------------------------------
 
-  requestDraw() {
-    if (this.pending) return;
-    this.pending = true;
-    requestAnimationFrame(() => { this.pending = false; this.draw(); });
+  homeZoom() {
+    const w = this.container.clientWidth || 800, h = this.container.clientHeight || 600;
+    // Show roughly the whole width of the world, but never leave empty bands above/below.
+    return Math.max(Math.log2(w / 512), Math.log2(h / 512), 0.3);
   }
 
-  draw() {
-    const { ctx, dpr, W, H, g } = this;
-    if (!W) return;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = getComputedStyle(this.canvas).getPropertyValue('--map-bg') || '#0b0e13';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // world -> screen as one canvas transform
-    const t = this.transform;
-    const a = t.k * this.s0;
-    const e = t.x + t.k * W / 2, f = t.y + t.k * H / 2;
-    ctx.setTransform(dpr * a, 0, 0, dpr * a, dpr * e, dpr * f);
-    const px = 1 / a; // one screen pixel in world units
-
-    if (this.day) {
-      const x0 = g.lon0 - 0.5 * g.dlon / UPSAMPLE;
-      const y0 = -g.lat0 - 0.5 * Math.abs(g.dlat) / UPSAMPLE;
-      const w = this.rw * g.dlon / UPSAMPLE, h = this.rh * Math.abs(g.dlat) / UPSAMPLE;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      if (this.layer === 'precip') {
-        // Newspaper-style base: pale sea, light grey land, then rain and snow on top.
-        ctx.fillStyle = '#eef1f4';
-        ctx.fillRect(-180, -90, 360, 180);
-        ctx.fillStyle = '#d3d8df';
-        ctx.fill(this.coast);
-        if (this.detail) ctx.drawImage(this.precipRaster, x0, y0, w, h);
-      } else {
-        ctx.drawImage(this.raster, x0, y0, w, h);
-      }
-      if (this.showUncertainty && this.day.fields.prmsl_spread) {
-        if (this.veilFor !== this.day) {
-          this.paintRaster(this.veil, this.day.fields.prmsl_spread, veilPixel);
-          this.veilFor = this.day;
-        }
-        ctx.drawImage(this.veil, x0, y0, w, h);
-      }
-    } else {
-      ctx.fillStyle = '#2a313d';
-      ctx.fillRect(-180, -90, 360, 180);
-    }
-
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    const light = this.day && this.layer === 'precip';
-    ctx.strokeStyle = light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.14)';
-    ctx.lineWidth = 0.6 * px;
-    ctx.stroke(this.graticule);
-
-    ctx.strokeStyle = !this.day ? 'rgba(200,210,225,0.55)' : light ? 'rgba(70,78,92,0.75)' : 'rgba(14,16,24,0.85)';
-    ctx.lineWidth = 1.1 * px;
-    ctx.stroke(this.coast);
-
-    if (this.day) {
-      const { minor, major } = this.isobars;
-      // A faint light halo lifts the lines off busy colours without doubling them.
-      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-      ctx.lineWidth = 2.6 * px; ctx.stroke(minor);
-      ctx.lineWidth = 3.4 * px; ctx.stroke(major);
-      ctx.strokeStyle = 'rgba(10,10,16,0.9)';
-      ctx.lineWidth = 1.2 * px; ctx.stroke(minor);
-      ctx.lineWidth = 2 * px; ctx.stroke(major);
-    }
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (this.day) this.drawCentres();
-    if (this.marker) this.drawMarker(...this.marker);
+  /** Screen point -> [lon, lat]. */
+  toLonLat(x, y) {
+    const ll = this.map.unproject([x, y]);
+    return Math.abs(ll.lat) > 90 ? null : [ll.lng, ll.lat];
   }
 
-  drawCentres() {
-    const { ctx } = this;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    for (const c of this.centres) {
-      const [x, y] = this.toScreen(c.lon, c.lat);
-      if (x < -20 || y < -20 || x > this.W + 20 || y > this.H + 20) continue;
-      ctx.font = '700 20px ui-sans-serif, system-ui, sans-serif';
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.strokeText(c.kind, x, y);
-      ctx.fillStyle = c.kind === 'L' ? '#b3122e' : '#123fa8';
-      ctx.fillText(c.kind, x, y);
-      ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
-      ctx.lineWidth = 3;
-      ctx.strokeText(Math.round(c.value), x, y + 15);
-      ctx.fillStyle = '#111';
-      ctx.fillText(Math.round(c.value), x, y + 15);
-    }
+  /** Animate to (lon, lat) at a MapLibre zoom level; padding keeps it clear of panels. */
+  flyTo(lon, lat, zoom, padding) {
+    this.map.flyTo({ center: [lon, lat], zoom, padding: padding || 0, duration: 1100, essential: true });
   }
 
-  drawMarker(lon, lat) {
-    const [x, y] = this.toScreen(lon, lat);
-    const { ctx } = this;
-    ctx.beginPath();
-    ctx.arc(x, y, 5, 0, 2 * Math.PI);
-    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#111'; ctx.stroke();
+  jumpTo(lon, lat, zoom, padding) {
+    this.map.jumpTo({ center: [lon, lat], zoom, padding: padding || 0 });
+  }
+
+  resetView() {
+    this.map.flyTo({ center: HOME, zoom: this.homeZoom(), padding: 0, duration: 800 });
   }
 
   setMarker(lonlat) {
-    this.marker = lonlat;
-    this.requestDraw();
+    if (!lonlat) {
+      this.marker?.remove();
+      this.marker = null;
+      return;
+    }
+    if (!this.marker) this.marker = new maplibregl.Marker({ color: '#f2c14e' });
+    this.marker.setLngLat(lonlat).addTo(this.map);
   }
 }
 
-// ---- helpers -----------------------------------------------------------------
+// ---- helpers ---------------------------------------------------------------------------------
 
-function temperaturePixel(d, o, t) {
+// Tell MapLibre a static canvas source has new pixels: upload on the next frame, then stop.
+function pushCanvas(map, id) {
+  const src = map.getSource(id);
+  if (!src) return;
+  src.play();
+  map.triggerRepaint();
+  map.once('render', () => src.pause());
+}
+
+function temperaturePixel(d, o, v) {
+  const t = v[0];
   if (Number.isNaN(t)) { d[o + 3] = 0; return; }
   const k = tempIndex(t) * 3;
   d[o] = tempLut[k]; d[o + 1] = tempLut[k + 1]; d[o + 2] = tempLut[k + 2]; d[o + 3] = 255;
@@ -420,7 +436,8 @@ function precipPixel(d, o, v) {
   d[o + 3] = Math.round((0.3 + 0.62 * Math.min(1, Math.max(0, (mm - 1) / 4))) * Math.min(1, (mm - 0.5) * 2) * 255);
 }
 
-function veilPixel(d, o, s) {
+function veilPixel(d, o, v) {
+  const s = v[0];
   const f = Math.min(Math.max((s - VEIL_FROM) / (VEIL_TO - VEIL_FROM), 0), 1);
   d[o] = 24; d[o + 1] = 26; d[o + 2] = 34;
   d[o + 3] = Number.isNaN(s) ? 0 : Math.round(f * VEIL_MAX_ALPHA * 255);
@@ -432,24 +449,29 @@ function makeCanvas(w, h) {
   return c;
 }
 
-// For each raster column: the two grid columns to blend (wrapping at the date line).
-function columnSampler(nx, f, rw) {
-  const i0 = new Int32Array(rw), i1 = new Int32Array(rw), fx = new Float32Array(rw);
-  for (let p = 0; p < rw; p++) {
-    const u = p / f;
-    i0[p] = Math.floor(u) % nx;
+// Which grid cells each raster pixel blends: columns evenly spaced in longitude,
+// rows evenly spaced in Mercator y.
+function mercatorSampler(g) {
+  const { nx, ny, lon0, lat0, dlon, dlat } = g;
+  const i0 = new Int32Array(RASTER_W), i1 = new Int32Array(RASTER_W), fx = new Float32Array(RASTER_W);
+  for (let p = 0; p < RASTER_W; p++) {
+    const lon = -180 + (p + 0.5) * 360 / RASTER_W;
+    let u = (lon - lon0) / dlon;
+    u = ((u % nx) + nx) % nx;
+    i0[p] = Math.floor(u);
     i1[p] = (i0[p] + 1) % nx;
-    fx[p] = u - Math.floor(u);
+    fx[p] = u - i0[p];
   }
-  return { i0, i1, fx };
-}
-
-// GeoJSON -> Path2D in world coordinates (x = lon, y = -lat), clipped at the date line.
-function worldPath(geojson) {
-  const projection = d3.geoEquirectangular().scale(180 / Math.PI).translate([0, 0]).precision(0.1);
-  const path = new Path2D();
-  d3.geoPath(projection, path)(geojson);
-  return path;
+  const r0 = new Int32Array(RASTER_H), r1 = new Int32Array(RASTER_H), fy = new Float32Array(RASTER_H);
+  for (let q = 0; q < RASTER_H; q++) {
+    const y = (q + 0.5) / RASTER_H;                                   // 0 = north edge
+    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI;
+    const v = Math.min(Math.max((lat - lat0) / dlat, 0), ny - 1);
+    r0[q] = Math.floor(v);
+    r1[q] = Math.min(r0[q] + 1, ny - 1);
+    fy[q] = v - r0[q];
+  }
+  return { i0, i1, fx, r0, r1, fy };
 }
 
 // 1-2-1 smoothing, wrapping in longitude.

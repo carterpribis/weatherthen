@@ -26,9 +26,13 @@ Day file format (the front end decodes this; keep the two in sync):
 
 from __future__ import annotations
 
+import fcntl
 import gzip
 import json
+import os
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -179,37 +183,86 @@ def merge_ranges(ranges: list[dict], start: str, end: str) -> list[dict]:
     return out
 
 
+def ranges_from_dates(dates) -> list[dict]:
+    """Sorted 'YYYY-MM-DD' strings -> contiguous [{start, end}] ranges."""
+    out: list[dict] = []
+    for d in sorted(set(dates)):
+        if out and np.datetime64(d) == np.datetime64(out[-1]["end"]) + np.timedelta64(1, "D"):
+            out[-1]["end"] = d
+        else:
+            out.append(dict(start=d, end=d))
+    return out
+
+
+MANIFEST = OUT / "manifest.json"
+
+
+@contextmanager
+def manifest_lock():
+    """Several pipelines (20CR backfill, ERA5, GFS) update the manifest; take turns."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    with open(OUT / ".manifest.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def load_manifest() -> dict:
-    path = OUT / "manifest.json"
-    m = json.loads(path.read_text()) if path.exists() else {}
+    for _ in range(25):  # another writer may be mid-write (older, unlocked code)
+        try:
+            m = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+            break
+        except json.JSONDecodeError:
+            time.sleep(0.2)
+    else:
+        raise RuntimeError("manifest.json is unreadable")
     if m.get("version") != 4:  # older layouts are rebuilt, not migrated
         m = {}
     return m
 
 
+def save_manifest(manifest: dict) -> None:
+    """Write atomically, so readers never see half a file."""
+    tmp = MANIFEST.with_name(f".manifest.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    os.replace(tmp, MANIFEST)
+
+
+def update_source(source: str, meta: dict, map_fields: list[dict], detail_fields: list[dict],
+                  lat, lon, add: tuple[str, str] | None = None, ranges: list[dict] | None = None) -> None:
+    """Register or update one source in the manifest. Either merge one new date range
+    (`add`) into its ranges, or replace its ranges outright (`ranges`)."""
+    with manifest_lock():
+        manifest = load_manifest()
+        manifest["version"] = 4
+        manifest["format"] = ("gzip of byte-shuffled int16 (all high bytes, then all low bytes); "
+                              "field blocks, row 0 = north, col 0 = west; value = stored*scale+offset")
+        manifest["nodata"] = NODATA
+        manifest["grid"] = dict(nx=len(lon), ny=len(lat),
+                                lon0=float(lon[0]), lat0=float(lat[0]),
+                                dlon=float(lon[1] - lon[0]), dlat=float(lat[1] - lat[0]))
+        sources = manifest.setdefault("sources", {})
+        src = sources.get(source, {})
+        src.update(meta)
+        src["map"] = dict(path=f"{source}/days/{{year}}/{{date}}.bin.gz", fields=field_meta(map_fields))
+        src["detail"] = dict(path=f"{source}/detail/{{year}}/{{date}}.bin.gz", fields=field_meta(detail_fields))
+        if ranges is not None:
+            src["ranges"] = ranges
+        elif add:
+            src["ranges"] = merge_ranges(src.get("ranges", []), *add)
+        sources[source] = src
+        # When sources overlap, the first listed wins (newest data first).
+        manifest["priority"] = [k for k in ("gfs", "era5", "20cr") if k in sources]
+        manifest["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_manifest(manifest)
+
+
 def write_manifest(year: int, info: dict) -> None:
-    path = OUT / "manifest.json"
-    manifest = load_manifest()
-    lat, lon = info["lat"], info["lon"]
-    manifest["version"] = 4
-    manifest["format"] = ("gzip of byte-shuffled int16 (all high bytes, then all low bytes); "
-                          "field blocks, row 0 = north, col 0 = west; value = stored*scale+offset")
-    manifest["nodata"] = NODATA
-    manifest["grid"] = dict(nx=len(lon), ny=len(lat),
-                            lon0=float(lon[0]), lat0=float(lat[0]),
-                            dlon=float(lon[1] - lon[0]), dlat=float(lat[1] - lat[0]))
-    sources = manifest.setdefault("sources", {})
-    src = sources.get(SOURCE, {})
-    src.update(SOURCE_META)
-    src["map"] = dict(path=f"{SOURCE}/days/{{year}}/{{date}}.bin.gz", fields=field_meta(FIELDS))
-    src["detail"] = dict(path=f"{SOURCE}/detail/{{year}}/{{date}}.bin.gz", fields=field_meta(DETAIL_FIELDS))
-    src["ranges"] = merge_ranges(src.get("ranges", []), info["dates"][0], info["dates"][-1])
-    sources[SOURCE] = src
-    # When sources overlap, the first listed wins (newest data first).
-    manifest["priority"] = [k for k in ("gfs", "era5", "20cr") if k in sources]
-    manifest["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-    print(f"wrote {path.relative_to(ROOT)}")
+    update_source(SOURCE, SOURCE_META, FIELDS, DETAIL_FIELDS, info["lat"], info["lon"],
+                  add=(info["dates"][0], info["dates"][-1]))
+    print(f"wrote {MANIFEST.relative_to(ROOT)}")
 
 
 def grid_file(manifest: dict, source: str, kind: str, date: str) -> Path:

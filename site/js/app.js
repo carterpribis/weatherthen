@@ -6,12 +6,11 @@ import { searchPlaces, pointPlace } from './places.js';
 import { modelDay, stationDay, describeCode, compass, MODEL_FIRST_DATE } from './report.js';
 import { FIRST_DATE, today, addDays, daysBetween, clampDate, longDate, shortDate } from './dates.js';
 
-const LAND_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-50m.json';
 const DEFAULT_DATE = '1888-03-13';
 const PLAY_MS = 350;
 const PREFETCH = 6;
 const REPORT_DELAY = 450; // wait for the date to settle before calling the weather APIs
-const PLACE_ZOOM = 5;
+const PLACE_ZOOM = 6.3;     // MapLibre zoom: about a state's width
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -39,14 +38,11 @@ main().catch((err) => {
 
 async function main() {
   setStatus('Loading…');
-  const [m, land, events] = await Promise.all([
-    loadManifest(),
-    fetch(LAND_URL).then((r) => { if (!r.ok) throw new Error('coastlines'); return r.json(); }),
-    loadEvents(),
-  ]);
+  const [m, events] = await Promise.all([loadManifest(), loadEvents()]);
   manifest = m;
-  map = new WeatherMap(els.canvas, m, land);
+  map = new WeatherMap(els.canvas, m);
   map.onChange = () => updateTip();
+  await map.ready;
 
   try { state.fahrenheit = localStorage.getItem('units') === 'F'; } catch {}
   els.units.value = state.fahrenheit ? 'F' : 'C';
@@ -259,9 +255,9 @@ function setPlace(place, { fly = false, instant = false } = {}) {
   els.report.hidden = !place;
   document.body.classList.toggle('has-report', !!place);
   if (place && fly) {
-    const at = visibleCentre();
-    if (instant) map.jumpTo(place.lon, place.lat, PLACE_ZOOM, at);
-    else map.flyTo(place.lon, place.lat, PLACE_ZOOM, at);
+    const pad = visiblePadding();
+    if (instant) map.jumpTo(place.lon, place.lat, PLACE_ZOOM, pad);
+    else map.flyTo(place.lon, place.lat, PLACE_ZOOM, pad);
   }
   updateNotice();
   updateUrl();
@@ -269,15 +265,14 @@ function setPlace(place, { fly = false, instant = false } = {}) {
   hideWelcome();
 }
 
-/** Centre of the map area not covered by the report (side panel on desktop, sheet on phones). */
-function visibleCentre() {
-  const W = innerWidth, H = innerHeight;
+/** Map padding that keeps a place clear of the report (side panel on desktop, sheet on phones). */
+function visiblePadding() {
   if (matchMedia('(max-width: 700px)').matches) {
     const top = document.querySelector('.title-card').getBoundingClientRect().bottom;
-    return [W / 2, top + (H * 0.38 - top) / 2 + 20];
+    return { top, bottom: Math.round(innerHeight * 0.55), left: 0, right: 0 };
   }
   const right = document.querySelector('.left-col').getBoundingClientRect().right;
-  return [right + (W - right) / 2, H / 2];
+  return { left: Math.round(right), top: 0, right: 0, bottom: 0 };
 }
 
 // ---- place report --------------------------------------------------------------------------
@@ -538,19 +533,11 @@ function setupMisc() {
   els.welcomeSkip.addEventListener('click', hideWelcome);
 
   // Mouse hover shows a readout; a click or tap (not a drag) picks that spot as the place.
-  els.canvas.addEventListener('pointermove', (e) => {
-    if (e.pointerType !== 'mouse' || e.buttons) return;
-    state.pointer = [e.offsetX, e.offsetY];
+  map.onHover((lonlat, point) => {
+    state.pointer = point ? [point.x, point.y] : null;
     updateTip();
   });
-  els.canvas.addEventListener('pointerleave', () => { state.pointer = null; updateTip(); });
-  let down = null;
-  els.canvas.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
-  els.canvas.addEventListener('pointerup', (e) => {
-    if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
-    const ll = map.toLonLat(e.offsetX, e.offsetY);
-    if (ll) setPlace(pointPlace(ll[1], ll[0]));
-  });
+  map.onPick((lon, lat) => setPlace(pointPlace(lat, lon)));
 }
 
 function updateTip() {

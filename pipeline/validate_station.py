@@ -1,6 +1,7 @@
 """Compare a year of built detail files with a real weather station.
 
-Usage:  .venv/bin/python pipeline/validate_station.py 1888 USW00094728 40.779 -73.969
+Usage:  .venv/bin/python pipeline/validate_station.py 1888 USW00094728 40.779 -73.969 [source]
+        (source: 20cr (default) or era5; ERA5 example: 2016 USW00094728 40.779 -73.969 era5)
 
 Downloads the station's GHCN-Daily records for the year from NOAA NCEI, decodes
 the detail file for every day (as the site does), samples the grid at the
@@ -21,7 +22,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data" / "out"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_days import SOURCE, decode_file  # noqa: E402
+from build_days import SOURCE, decode_file, grid_file  # noqa: E402
 
 
 def station_year(station: str, year: int) -> dict[str, dict]:
@@ -33,9 +34,9 @@ def station_year(station: str, year: int) -> dict[str, dict]:
     return {row["DATE"]: row for row in rows}
 
 
-def sample(manifest: dict, date: str, lat: float, lon: float) -> dict[str, float]:
+def sample(manifest: dict, date: str, lat: float, lon: float, source: str = SOURCE) -> dict[str, float]:
     g = manifest["grid"]
-    grids = decode_file(manifest, SOURCE, "detail", date)
+    grids = decode_file(manifest, source, "detail", date)
     u = ((lon - g["lon0"]) / g["dlon"]) % g["nx"]
     v = (lat - g["lat0"]) / g["dlat"]
     i0, j0 = int(u), int(v)
@@ -47,11 +48,12 @@ def sample(manifest: dict, date: str, lat: float, lon: float) -> dict[str, float
     return out
 
 
-def main(year: int, station: str, lat: float, lon: float) -> None:
+def main(year: int, station: str, lat: float, lon: float, source: str = SOURCE) -> None:
     manifest = json.loads((DATA / "manifest.json").read_text())
     obs = station_year(station, year)
     dates = [str(d)[:10] for d in np.arange(np.datetime64(f"{year}-01-01"), np.datetime64(f"{year + 1}-01-01"))]
-    model = {d: sample(manifest, d, lat, lon) for d in dates}
+    dates = [d for d in dates if grid_file(manifest, source, 'detail', d).exists()]  # built days only
+    model = {d: sample(manifest, d, lat, lon, source) for d in dates}
 
     def pairs(okey, mkey, scale=1.0):
         a = [(float(obs[d][okey]) * scale, model[d][mkey]) for d in dates if d in obs and obs[d].get(okey) not in (None, "")]
@@ -75,15 +77,21 @@ def main(year: int, station: str, lat: float, lon: float) -> None:
     snow_m = (s[:, 1] >= 0.25) & (s[:, 2] >= 1)
     print(f"  SNOW days (>=1 cm): station {snow_o.sum()}, model snow days {snow_m.sum()}, both {np.sum(snow_o & snow_m)}")
 
-    print("  Great Blizzard check:")
-    for d in ["1888-03-11", "1888-03-12", "1888-03-13", "1888-03-14"]:
-        m, o = model[d], obs.get(d, {})
-        print(f"    {d}: model precip {m['precip']:.1f} mm, snow {m['snow_frac']:.0%} of day, "
-              f"high/low {m['tmax']:.1f}/{m['tmin']:.1f} °C, cloud {m['cloud']:.0f}%, "
-              f"wind {np.hypot(m['u10'], m['v10']):.1f} m/s  |  station PRCP {o.get('PRCP')} SNOW {o.get('SNOW')} TMAX {o.get('TMAX')} TMIN {o.get('TMIN')}")
+    storms = {"Great Blizzard of 1888": ["1888-03-11", "1888-03-12", "1888-03-13", "1888-03-14"],
+              "January 2016 blizzard": ["2016-01-22", "2016-01-23", "2016-01-24"]}
+    for name, days in storms.items():
+        days = [d for d in days if d in model]
+        if days:
+            print(f"  {name} check:")
+        for d in days:
+            m, o = model[d], obs.get(d, {})
+            print(f"    {d}: model precip {m['precip']:.1f} mm, snow {m['snow_frac']:.0%}, "
+                  f"high/low {m['tmax']:.1f}/{m['tmin']:.1f} °C, cloud {m['cloud']:.0f}%, "
+                  f"wind {np.hypot(m['u10'], m['v10']):.1f} m/s  |  station PRCP {o.get('PRCP')} SNOW {o.get('SNOW')} TMAX {o.get('TMAX')} TMIN {o.get('TMIN')}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         sys.exit(__doc__)
-    main(int(sys.argv[1]), sys.argv[2], float(sys.argv[3]), float(sys.argv[4]))
+    main(int(sys.argv[1]), sys.argv[2], float(sys.argv[3]), float(sys.argv[4]),
+         sys.argv[5] if len(sys.argv) == 6 else SOURCE)

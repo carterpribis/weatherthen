@@ -28,10 +28,15 @@ Validation against New York Central Park's 1888 records (GHCN-Daily USW00094728)
 
 ## Site
 
-Static files in `site/` with no build step: `index.html`, `style.css` and ES modules in `site/js/`. It uses d3 and topojson-client from jsDelivr, plus Natural Earth coastlines from the `world-atlas` package.
+Static files in `site/` with no build step: `index.html`, `style.css` and ES modules in `site/js/`.
+
+- **Base map:** [MapLibre GL JS](https://maplibre.org/) 6.18.0, hosted in `site/vendor/` so its worker loads from the same site. It shows [OpenFreeMap](https://openfreemap.org)'s free "Positron" style (OpenStreetMap data; no key, no account).
+- **Other library:** d3 comes from jsDelivr.
 
 - `js/data.js` loads the manifest and decodes day files (gunzip, then unshuffle the bytes).
-- `js/map.js` draws on a canvas: the temperature or rain-and-snow raster upsampled 4×, the uncertainty veil, coastlines, isobars every 4 hPa from d3-contour, and H/L centres.
+- `js/map.js` puts the weather into the MapLibre map:
+  - Temperature or rain and snow, plus the uncertainty veil, are painted into canvases with rows spaced in Mercator y. They're shown as canvas sources between the base map's land and its roads and borders.
+  - Isobars every 4 hPa come from d3-contour on a 2× interpolated grid and are drawn as GeoJSON lines. H/L centres are drawn as labels.
 - `js/conditions.js` turns a day of reanalysis detail into words such as "Heavy snow, windy". Its thresholds come from the validation above.
 - `js/places.js` handles place search through Open-Meteo's geocoding API (GeoNames). It also accepts typed "lat, lon".
 - `js/report.js` builds the place report for any date from 1836 to today:

@@ -6,13 +6,13 @@
   <title>Weather Then</title>
   <meta name="description" content="Look up the weather for any place on any day since 1836, from yesterday back to the 19th century.">
   <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="vendor/maplibre-gl-6.18.0/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
-  <canvas id="map" aria-label="Weather map: temperature colours and sea-level pressure isobars. Click a spot to see its weather."></canvas>
+  <div id="map" role="region" aria-label="Weather map: temperature colours and sea-level pressure isobars over a street map. Click a spot to see its weather."></div>
 
   <div class="left-col">
     <header class="panel title-card">
@@ -95,8 +95,10 @@
   </div>
 
   <footer class="credits">
-    Map: <a id="map-credit" href="https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html" target="_blank" rel="noopener">20CRv3</a>
+    <span class="full">Map: <a id="map-credit" href="https://psl.noaa.gov/data/gridded/data.20thC_ReanV3.html" target="_blank" rel="noopener">20CRv3</a>
     · Place weather: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open‑Meteo</a>, <a href="https://www.ncei.noaa.gov/products/land-based-station/global-historical-climatology-network-daily" target="_blank" rel="noopener">NOAA GHCN‑Daily</a>
+    · Base map: <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a></span>
+    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap<span class="full"> contributors</span></a>
     · <button id="about-open" type="button" class="link">About</button>
   </footer>
 
@@ -110,10 +112,10 @@
       <li><b>Weather models.</b> From 1940 on, ERA5 (a reconstruction of the global weather by the European Centre for Medium-Range Weather Forecasts) gives conditions, highs and lows, rain, snow, sunshine and wind, hour by hour. For the last few months it uses recent weather-model data, so yesterday and last week are covered.</li>
       <li><b>Station records.</b> What thermometers and rain gauges at nearby weather stations actually recorded, from NOAA’s Global Historical Climatology Network. Some stations go back to the early 1800s.</li>
     </ul>
-    <p>The map shows the <b>20th Century Reanalysis</b> (version 3), led by NOAA and the University of Colorado. It feeds historical surface-pressure readings from stations and ships into a modern weather model and rebuilds the atmosphere every 3 hours back to 1836. Colours are the day’s average temperature 2 metres above the ground. The lines are isobars: lines of equal air pressure at sea level, ringing lows (L), which bring storms, and highs (H), which bring settled weather.</p>
-    <p>The reconstruction is run 80 times with small differences. Where the runs agree, the map is well supported by observations; where they disagree, often over the southern oceans in the 1800s, it is an educated guess. Turn on <i>Show uncertainty</i> to see where. Coastlines are modern, and there are no country borders because many have changed since.</p>
+    <p>Up to 2015 the map shows the <b>20th Century Reanalysis</b> (version 3), led by NOAA and the University of Colorado. It feeds historical surface-pressure readings from stations and ships into a modern weather model and rebuilds the atmosphere every 3 hours back to 1836. Colours are the day’s average temperature 2 metres above the ground. The lines are isobars: lines of equal air pressure at sea level, ringing lows (L), which bring storms, and highs (H), which bring settled weather. From 2016 on it shows <b>ERA5</b>, the European Centre for Medium-Range Weather Forecasts’ modern reanalysis, which uses millions of observations a day; new days appear about a week after they happen.</p>
+    <p>The reconstruction is run 80 times with small differences. Where the runs agree, the map is well supported by observations; where they disagree, often over the southern oceans in the 1800s, it is an educated guess. Turn on <i>Show uncertainty</i> to see where. The base map (roads, towns, state and country borders) shows the world as it is today, for orientation; many borders and places were different back then.</p>
     <p class="small">Privacy: place searches and the place and date you look up are sent to Open-Meteo and NOAA to fetch the weather. The site counts page views with Cloudflare Web Analytics, which uses no cookies and doesn’t track you across sites. Nothing else is collected.</p>
-    <p class="small">Data: NOAA-CIRES-DOE 20th Century Reanalysis V3, provided by NOAA PSL, Boulder, Colorado, USA (CC BY 4.0; Slivinski et al. 2019, <i>Q. J. R. Meteorol. Soc.</i> 145, 2876–2908). Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0), including ERA5 from Copernicus/ECMWF. Station records: NOAA NCEI GHCN-Daily. Place names: GeoNames via Open-Meteo. Coastlines: Natural Earth.</p>
+    <p class="small">Data: NOAA-CIRES-DOE 20th Century Reanalysis V3, provided by NOAA PSL, Boulder, Colorado, USA (CC BY 4.0; Slivinski et al. 2019, <i>Q. J. R. Meteorol. Soc.</i> 145, 2876–2908). Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0), including ERA5 from Copernicus/ECMWF. Maps from 2016: generated using Copernicus Climate Change Service information (ERA5 post-processed daily statistics; Hersbach et al. 2020). Station records: NOAA NCEI GHCN-Daily. Place names: GeoNames via Open-Meteo. Base map: OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors (ODbL). Map library: MapLibre GL JS.</p>
     <p class="small">Who made this: Carter Pribis came up with the project, chose the data and directed the design. The code (data pipeline and this site) was written by Claude Code, Anthropic’s AI coding assistant, working with Carter.</p>
     <button id="about-close" type="button">Close</button>
   </dialog>
