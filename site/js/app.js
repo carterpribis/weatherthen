@@ -374,11 +374,11 @@ function reanalysisHtml(place, day, detail) {
     // Precipitation is the depth of water (snow melted). When it snowed, also give a rough
     // snow depth: fresh snow is about 10x its melted water (5x wet, 20x powder).
     const snowy = d.precip >= 1 && d.snow_frac >= 0.15;
-    const how = !snowy ? '' : d.snow_frac >= 0.8 ? 'falling as snow' : `snow ${Math.round(d.snow_frac * 100)}% of the day`;
-    facts.push(['Precipitation', `${fmtMm(d.precip)} of water${how ? ` <small>${how}</small>` : ''}`]);
+    const how = !snowy ? '' : d.snow_frac >= 0.8 ? 'as snow' : `snow ${Math.round(d.snow_frac * 100)}% of the day`;
+    facts.push(['Precipitation', `${fmtMm(d.precip)}${how ? ` <small>${how}</small>` : ''}`]);
     if (snowy) {
       const snowCm = d.precip * Math.min(1, d.snow_frac / 0.8);   // mm of water x 10 = mm of snow = this many cm
-      facts.push(['Snowfall (estimate)', `about ${fmtSnowEstimate(snowCm)} <small>of snow</small>`]);
+      facts.push(['Snowfall (est.)', `about ${fmtSnowEstimate(snowCm)}`]);
     }
     facts.push(['Cloud cover', `${Math.round(d.cloud)}%`]);
     facts.push(['Average wind', `${fmtSpeed(Math.hypot(d.u10, d.v10) * 3.6)} ${compass(windFrom(d.u10, d.v10))}`]);
