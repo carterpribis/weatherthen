@@ -67,7 +67,9 @@ Size and cost:
 4. **ERA5 2016 onwards:** a CDS API script, one request per variable per month, about 11 variables × 131 months.
    - **Download size:** to measure with one test month before committing.
    - **Speed:** CDS queues requests, so expect hours to a day.
-   - **Grid:** the native 0.25° grid is regridded to 1° locally, unless the daily-statistics request accepts a `grid` option (to check when building).
+   - **Grid:** tested on 16 Nov 2026: the daily-statistics request accepts `"grid": ["1.0", "1.0"]`. The server regrids to the same 1° grid as 20CR (lat 90 to −90, lon 0–359), so nothing needs regridding locally.
+   - **Measured size and speed:** 0.17 MB per variable per day at 1°; one request took 38 s, mostly queue time. Several variables fit in one request per statistic (mean, max, min), so 2016 onwards is about 3 requests a month × 131 months, roughly 7 GB.
+   - **Access:** the Copernicus account, key (`~/.cdsapirc`, set with `infra/setup-cds.sh`) and ERA5 licence are done.
 5. **Validation:** run `validate_station.py` on a few station-years to spot problems:
    - 1850 (sparse data)
    - 1950 and 2000 (20CR)
@@ -123,9 +125,9 @@ Run time is about 5–10 minutes a day, which is free on a public repo and about
 
 1. ✅ Pipeline: year-aware fetch, `backfill.py` and the manifest-v4 format, then run 1836–1840 locally as a test.
 2. ✅ Front end: source-aware manifest, `DATA_ROOT` and the cache headers.
-3. R2 bucket and domain *(needs you)*, then upload the test years and check the live site reading from R2.
-4. Full 20CR backfill overnight, then validation.
-5. ERA5 script, test month, backfill 2016 onwards, then validation *(needs your CDS key)*.
+3. ✅ R2 bucket and domain, then upload the test years and check the live site reading from R2.
+4. ⏳ Full 20CR backfill overnight (running since 16 Nov 2026, 21:06), then validation.
+5. ERA5 script, test month, backfill 2016 onwards, then validation (the Copernicus key is set up).
 6. GFS preliminary days.
 7. GitHub repo and the Actions daily job *(needs you)*, and deploy the site to weather.prib.is.
 
