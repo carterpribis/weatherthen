@@ -105,7 +105,7 @@ async function fetchStations(place, date, max) {
       dataset: 'daily-summaries', stations: ids.join(','), startDate: date, endDate: date,
       dataTypes: STATION_TYPES.join(','), units: 'metric', format: 'json',
     });
-    const rows = await getJson(`${NCEI_DATA}?${params}`);
+    const rows = await getNoaa(`${NCEI_DATA}?${params}`);
     const byId = new Map(candidates.map((s) => [s.id, s]));
     const found = (Array.isArray(rows) ? rows : [])
       .map((r) => ({ ...byId.get(r.STATION), ...readStationRow(r) }))
@@ -123,7 +123,7 @@ async function nearbyStations(place, date, radius) {
     dataset: 'daily-summaries', startDate: `${date}T00:00:00`, endDate: `${date}T23:59:59`,
     bbox, limit: '50',
   });
-  const data = await getJson(`${NCEI_SEARCH}?${params}`);
+  const data = await getNoaa(`${NCEI_SEARCH}?${params}`);
   return (data.results || [])
     .map((r) => {
       const s = r.stations?.[0];
@@ -183,6 +183,38 @@ export function describeCode(code) {
 export function compass(deg) {
   if (deg == null) return '';
   return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];
+}
+
+// NOAA's services are usually quick but some requests stall for a minute or more,
+// seemingly on whichever server the connection lands. If there is no answer after
+// NOAA_RETRY_MS, send the same request again (it goes out on a second connection) and
+// take whichever answers first; give up after NOAA_LIMIT_MS.
+const NOAA_RETRY_MS = 6000;
+const NOAA_LIMIT_MS = 20000;
+
+function getNoaa(url) {
+  const controllers = [];
+  const attempt = () => {
+    const ctl = new AbortController();
+    controllers.push(ctl);
+    return fetch(url, { signal: ctl.signal, cache: 'no-store' }).then(async (res) => {
+      const body = await res.json().catch(() => null);
+      if (!res.ok && !body) throw new Error(`HTTP ${res.status}`);
+      return body ?? {};
+    });
+  };
+  const timers = [];
+  const first = attempt();
+  const second = new Promise((resolve, reject) => {
+    timers.push(setTimeout(() => attempt().then(resolve, reject), NOAA_RETRY_MS));
+  });
+  const limit = new Promise((_, reject) => {
+    timers.push(setTimeout(() => reject(new Error('timeout')), NOAA_LIMIT_MS));
+  });
+  return Promise.race([Promise.any([first, second]), limit]).finally(() => {
+    timers.forEach(clearTimeout);
+    controllers.forEach((c) => c.abort());
+  });
 }
 
 async function getJson(url) {

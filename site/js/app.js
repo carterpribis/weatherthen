@@ -321,10 +321,18 @@ async function loadReport() {
 
   // 2. Station records
   const stEl = $('r-stations');
-  stEl.innerHTML = '<h3>Recorded at nearby stations</h3><p class="r-loading">Searching NOAA station records…</p>';
-  stationDay(place, date)
-    .then((list) => { if (!stale()) stEl.innerHTML = stationsHtml(list, date); })
-    .catch(() => { if (!stale()) stEl.innerHTML = '<h3>Recorded at nearby stations</h3><p class="r-note">NOAA’s station records are unavailable right now.</p>'; });
+  const loadStations = () => {
+    stEl.innerHTML = '<h3>Recorded at nearby stations</h3><p class="r-loading">Searching NOAA station records…</p>';
+    stationDay(place, date)
+      .then((list) => { if (!stale()) stEl.innerHTML = stationsHtml(list, date); })
+      .catch(() => {
+        if (stale()) return;
+        stEl.innerHTML = '<h3>Recorded at nearby stations</h3><p class="r-note">NOAA’s station records aren’t responding. '
+          + '<button type="button" class="r-retry">Try again</button></p>';
+        stEl.querySelector('.r-retry').addEventListener('click', loadStations);
+      });
+  };
+  loadStations();
 
   // 3. Archive links
   $('r-archives').innerHTML = archivesHtml(place, date);
