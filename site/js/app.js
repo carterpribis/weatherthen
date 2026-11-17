@@ -372,8 +372,15 @@ function reanalysisHtml(place, day, detail) {
         <div class="r-cond">${text}</div>
         <div class="r-temps">High <b>${fmtTemp(d.tmax)}</b> · Low <b>${fmtTemp(d.tmin)}</b></div>
       </div>`;
-    const snowShare = d.precip >= 1 && d.snow_frac >= 0.15 ? ` <small>(${d.snow_frac >= 0.85 ? 'as snow' : `snow ${Math.round(d.snow_frac * 100)}% of the day`})</small>` : '';
-    facts.push(['Precipitation', fmtMm(d.precip) + snowShare]);
+    // Precipitation is the depth of water (snow melted). When it snowed, also give a rough
+    // snow depth: fresh snow is about 10x its melted water (5x wet, 20x powder).
+    const snowy = d.precip >= 1 && d.snow_frac >= 0.15;
+    const how = !snowy ? '' : d.snow_frac >= 0.8 ? 'falling as snow' : `snow ${Math.round(d.snow_frac * 100)}% of the day`;
+    facts.push(['Precipitation', `${fmtMm(d.precip)} of water${how ? ` <small>${how}</small>` : ''}`]);
+    if (snowy) {
+      const snowCm = d.precip * Math.min(1, d.snow_frac / 0.8);   // mm of water x 10 = mm of snow = this many cm
+      facts.push(['Snowfall (estimate)', `about ${fmtSnowEstimate(snowCm)} <small>of snow</small>`]);
+    }
     facts.push(['Cloud cover', `${Math.round(d.cloud)}%`]);
     facts.push(['Average wind', `${fmtSpeed(Math.hypot(d.u10, d.v10) * 3.6)} ${compass(windFrom(d.u10, d.v10))}`]);
     if (d.snow_depth >= 0.5) facts.push(['Snow on ground', fmtCm(d.snow_depth)]);
@@ -596,6 +603,11 @@ const toMm = (mm) => (state.fahrenheit ? mm / 25.4 : mm);
 const fmtTemp = (c) => (c == null ? '–' : state.fahrenheit ? `${toTemp(c).toFixed(0)} °F` : `${c.toFixed(1)} °C`);
 const fmtDelta = (c) => (state.fahrenheit ? `${(c * 9 / 5).toFixed(1)}°` : `${c.toFixed(1)}°`);
 const fmtMm = (mm) => (mm == null ? '–' : state.fahrenheit ? `${(mm / 25.4).toFixed(2)} in` : `${mm.toFixed(1)} mm`);
+/** A rough snow depth: whole numbers above 2, one decimal below. */
+const fmtSnowEstimate = (cm) => {
+  const v = state.fahrenheit ? cm / 2.54 : cm;
+  return `${v >= 2 ? Math.round(v) : v.toFixed(1)} ${state.fahrenheit ? 'in' : 'cm'}`;
+};
 const fmtCm = (cm) => (cm == null ? '–' : state.fahrenheit ? `${(cm / 2.54).toFixed(1)} in` : `${cm.toFixed(1)} cm`);
 const fmtSpeed = (kmh) => (state.fahrenheit ? `${(kmh / 1.609).toFixed(0)} mph` : `${kmh.toFixed(0)} km/h`);
 const fmtKm = (km) => (state.fahrenheit ? `${(km / 1.609).toFixed(0)} mi away` : `${km.toFixed(0)} km away`);
