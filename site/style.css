@@ -47,6 +47,16 @@ button, input, select { font: inherit; color: inherit; }
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
+/* scrollbars inside panels: a thin thumb on a clear track, so the track's square
+   corners don't poke out of the panel's rounded ones */
+.report, .legend, .results, dialog { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.28) transparent; }
+.report::-webkit-scrollbar, .legend::-webkit-scrollbar, .results::-webkit-scrollbar, dialog::-webkit-scrollbar { width: 8px; background: transparent; }
+.report::-webkit-scrollbar-thumb, .legend::-webkit-scrollbar-thumb, .results::-webkit-scrollbar-thumb, dialog::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+}
+.report::-webkit-scrollbar-track, .legend::-webkit-scrollbar-track, .results::-webkit-scrollbar-track, dialog::-webkit-scrollbar-track { background: transparent; margin: 8px 0; }
+
 /* ---- left column: title + search, place report ---- */
 .left-col {
   position: fixed;
