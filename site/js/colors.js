@@ -37,7 +37,8 @@ export function tempIndex(t) {
 // PRECIP_MIN to PRECIP_MAX, coloured by type. Snow share blends rain -> snow.
 export const PRECIP_MIN = 1;
 export const PRECIP_MAX = 50;
-export const PRECIP_TICKS = [1, 3, 10, 50];
+export const PRECIP_TICKS_MM = [1, 10, 50];        // key labels in mm (°C)
+export const PRECIP_TICKS_IN = [0.05, 0.5, 2];     // key labels in inches (°F)
 const RAMP_STEPS = 64;
 const ramp = (stops) => {
   const f = d3.interpolateRgbBasis(stops);

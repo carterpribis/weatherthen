@@ -1,7 +1,7 @@
 import { loadManifest, loadDay, loadDetail, sampleGrid, hasMap, sourceFor, coverageLabel } from './data.js';
 import { classifyDay, windFrom } from './conditions.js';
 import { datePicker } from './datepicker.js';
-import { tempScale, RAIN_STOPS, SNOW_STOPS, FRZ_STOPS, PRECIP_MIN, PRECIP_MAX, PRECIP_TICKS } from './colors.js';
+import { tempScale, RAIN_STOPS, SNOW_STOPS, FRZ_STOPS, PRECIP_MIN, PRECIP_MAX, PRECIP_TICKS_MM, PRECIP_TICKS_IN } from './colors.js';
 import { WeatherMap } from './map.js';
 import { searchPlaces, pointPlace } from './places.js';
 import { modelDay, stationDay, describeCode, compass, MODEL_FIRST_DATE } from './report.js';
@@ -567,10 +567,12 @@ function drawLegend() {
   }
   // Ticks sit at their log-scale positions along the ramp.
   const span = Math.log(PRECIP_MAX / PRECIP_MIN);
-  $('legend-precip-ticks').innerHTML = PRECIP_TICKS.map((mm) => {
-    const pct = (Math.log(mm / PRECIP_MIN) / span) * 100;
-    const last = mm === PRECIP_TICKS.at(-1);
-    const label = state.fahrenheit ? `${(mm / 25.4).toFixed(mm < 10 ? 2 : 1)}${last ? ' in' : ''}` : `${mm}${last ? ' mm' : ''}`;
+  const pTicks = state.fahrenheit ? PRECIP_TICKS_IN : PRECIP_TICKS_MM;
+  $('legend-precip-ticks').innerHTML = pTicks.map((v, i) => {
+    const mm = state.fahrenheit ? v * 25.4 : v;
+    const pct = Math.min(100, Math.max(0, (Math.log(mm / PRECIP_MIN) / span) * 100));
+    const last = i === pTicks.length - 1;
+    const label = `${v}${last ? (state.fahrenheit ? ' in' : ' mm') : ''}`;
     return `<span style="left:${pct}%"${last ? ' class="last"' : ''}>${label}</span>`;
   }).join('');
 }
