@@ -26,6 +26,15 @@ Validation against New York Central Park's 1888 records (GHCN-Daily USW00094728)
 - The reanalysis catches 95% of the station's wet days but shows rain on more days (173 against 111), so the site needs at least 1 mm before calling a day wet.
 - It catches 11 of the 13 snow days.
 
+### 2016 to yesterday
+
+From 2016 the maps come from two other NOAA sources, in the same file format:
+
+- **1 Jan 2016 to 17 Mar 2026:** NCEP/NCAR Reanalysis 1 (`pipeline/ncep.py`). Its grid is about 1.9°, interpolated to 1°. NOAA stopped updating its copy in March 2026.
+- **18 Mar 2026 on:** the GFS weather model (`pipeline/gfs.py`). It downloads only the fields it needs from NOAA's public bucket, about 1.5 MB a day.
+
+A GitHub Actions job ([.github/workflows/daily.yml](.github/workflows/daily.yml)) runs `gfs.py --daily --upload` each morning. It reads the live manifest, builds every day from the last one published up to yesterday, uploads them and updates the manifest, so a missed run is made up by the next. It needs three repository secrets for the R2 bucket, set once with `bash infra/setup-daily.sh`.
+
 ## Site
 
 Static files in `site/` with no build step: `index.html`, `style.css` and ES modules in `site/js/`.

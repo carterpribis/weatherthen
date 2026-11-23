@@ -1,7 +1,7 @@
 """Map days after NOAA's reanalysis ends, from NOAA's GFS weather model.
 
 Usage:  .venv/bin/python pipeline/gfs.py [first_day] [last_day] [--upload] [--keep]
-        .venv/bin/python pipeline/gfs.py --recent 10 --upload      (the daily job)
+        .venv/bin/python pipeline/gfs.py --daily --upload          (the daily job)
         default: 2026-03-18 (the day after pipeline/ncep.py's last day) to yesterday (UTC)
 
 NOAA publishes every GFS run in a public bucket on AWS, with an index that says where
@@ -18,6 +18,11 @@ For a day it uses the four runs that start at 00, 06, 12 and 18 UTC:
 Finished days are recorded in data/gfs-state.json, so a stopped run picks up where it
 left off. A day whose files are not all published yet is skipped and tried again on
 the next run. To stop cleanly:  touch data/gfs.stop
+
+--daily is for a machine with no local files (.github/workflows/daily.yml). It first
+copies the live manifest down and takes the list of finished days from it, then builds
+every day from the last one published up to yesterday. A missed run is made up by the
+next one.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ STOP = ROOT / "data" / "gfs.stop"
 SOURCE = "gfs"
 FIRST_DAY = date(2026, 3, 18)
 BUCKET = "https://noaa-gfs-bdp-pds.s3.amazonaws.com"
+LIVE = "https://data.weather.prib.is"
 IMMUTABLE = "public, max-age=31536000, immutable"
 UPLOAD_EVERY = 10            # days per upload and manifest update
 
@@ -249,6 +255,26 @@ def publish(dates: list[str], upload: bool, remote: str, keep: bool) -> None:
     log(f"{dates[0]}..{dates[-1]}: {len(dates)} days" + (" uploaded" if upload else " built"))
 
 
+def sync_from_live(upload: bool, remote: str) -> None:
+    """Start from what is published: the live manifest, and the days it lists as done."""
+    bd.OUT.mkdir(parents=True, exist_ok=True)
+    with bd.manifest_lock():
+        if upload:   # straight from the bucket, so a cached copy can't be stale
+            rclone("copyto", f"{remote}/manifest.json", str(bd.MANIFEST), "--s3-no-check-bucket")
+        else:
+            req = urllib.request.Request(f"{LIVE}/manifest.json", headers={"User-Agent": "weatherthen-pipeline"})
+            bd.MANIFEST.write_bytes(urllib.request.urlopen(req, timeout=60).read())
+    manifest = bd.load_manifest()
+    if SOURCE not in manifest.get("sources", {}):
+        raise RuntimeError("the live manifest has no GFS source; refusing to start from nothing")
+    days = set(load_state()["days"])
+    for r in manifest["sources"][SOURCE]["ranges"]:
+        a, b = date.fromisoformat(r["start"]), date.fromisoformat(r["end"])
+        days |= {(a + timedelta(days=i)).isoformat() for i in range((b - a).days + 1)}
+    STATE.write_text(json.dumps({"days": sorted(days)}) + "\n")
+    log(f"live manifest: GFS published through {max(days)}")
+
+
 # ---- run ------------------------------------------------------------------------------
 
 def run(start: date, end: date, upload: bool, remote: str, keep: bool) -> None:
@@ -285,7 +311,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("start", nargs="?", help=f"first day, YYYY-MM-DD (default {FIRST_DAY})")
     ap.add_argument("end", nargs="?", help="last day (default: yesterday, UTC)")
-    ap.add_argument("--recent", type=int, metavar="N", help="only the last N days (for the daily job)")
+    ap.add_argument("--recent", type=int, metavar="N", help="only the last N days")
+    ap.add_argument("--daily", action="store_true", help="start from the live manifest (the daily job)")
     ap.add_argument("--upload", action="store_true")
     ap.add_argument("--remote", default="r2:weatherthen-data")
     ap.add_argument("--keep", action="store_true", help="keep built files locally after uploading")
@@ -293,7 +320,10 @@ if __name__ == "__main__":
     yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
     end = date.fromisoformat(a.end) if a.end else yesterday
     start = (yesterday - timedelta(days=a.recent - 1)) if a.recent else date.fromisoformat(a.start or FIRST_DAY.isoformat())
+    (ROOT / "data").mkdir(exist_ok=True)
     try:
+        if a.daily:
+            sync_from_live(a.upload, a.remote)
         run(start, min(end, yesterday), a.upload, a.remote, a.keep)
     except KeyboardInterrupt:
         log("interrupted; re-run to resume")

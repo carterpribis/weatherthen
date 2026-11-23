@@ -1,0 +1,52 @@
+# Adds yesterday's map to the archive each morning, from NOAA's GFS model.
+# Needs three repository secrets (set once with infra/setup-daily.sh):
+#   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT
+name: Daily map
+
+on:
+  schedule:
+    # NOAA finishes publishing a day's last model run by about 23:00 UTC that day.
+    # The second run only does anything if the first one failed or NOAA was late.
+    - cron: "17 6 * * *"
+    - cron: "17 15 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-map
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACL: private
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements-daily.txt
+      - name: Install
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          pip install -q -r pipeline/requirements-daily.txt
+      - name: Build and upload the days not yet published
+        working-directory: pipeline
+        run: python gfs.py --daily --upload
+      - name: Check yesterday is live
+        run: |
+          want=$(date -u -d yesterday +%F)
+          have=$(rclone cat r2:weatherthen-data/manifest.json | python -c "import json,sys; print(json.load(sys.stdin)['sources']['gfs']['ranges'][-1]['end'])")
+          echo "published through $have; yesterday was $want"
+          test "$have" = "$want"
