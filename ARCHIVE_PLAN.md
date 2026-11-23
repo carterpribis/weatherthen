@@ -1,6 +1,6 @@
 # Map archive plan: every day from 1836 to yesterday
 
-Status: decisions A–D taken as recommended (1836 start, 20CR to 2015, GFS for the last days, GitHub Actions). Steps 1 and 2 are done (see Order of work).
+Status (22 Nov 2026): **2016 onward now comes from NOAA, not Copernicus.** The ERA5 download stopped on 17 Nov when Copernicus rejected year-sized requests as too large, after months of queueing for two months of data. `pipeline/ncep.py` (NCEP/NCAR Reanalysis 1, 2016 to 17 Mar 2026) and `pipeline/gfs.py` (GFS, 18 Mar 2026 on) replace it; neither needs an account or a queue. The ERA5 sections below are kept as a record. `gfs.py --recent N --upload` is the piece a daily job would run.
 
 ## Goal
 
@@ -11,8 +11,9 @@ A map (temperature, pressure, rain and snow) for every day from 1 January 1836 t
 | Dates | Source | Why | Arrives |
 |---|---|---|---|
 | 1836–2015 | **NOAA 20CRv3** (what 1888 uses now) | Same pipeline, same fields, includes the uncertainty spread | One-time backfill |
-| 2016 → 5 days ago | **ERA5 / ERA5T** hourly data (Copernicus), daily values computed locally | Best modern reanalysis; ERA5T is published 5 days behind real time. (The ready-made daily-statistics product queued for hours, so we switched.) | Backfill a year per request, one request at a time, then daily |
-| Last 4–5 days | **NOAA GFS analyses** (NOMADS, about 7–10 days kept) | Fills the ERA5T gap so yesterday has a map; marked "preliminary" | Daily, replaced by ERA5 when it arrives |
+| 2016 → 17 Mar 2026 | **NOAA NCEP/NCAR Reanalysis 1** (PSL, same server as 20CR) | Small yearly files, no queue. Coarser (about 1.9°), interpolated to 1°. PSL stopped updating its copy in March 2026 | One-time backfill, about a minute a year |
+| 18 Mar 2026 → yesterday | **NOAA GFS** analyses and short forecasts (public AWS bucket, 1° files, only the needed fields fetched) | Already on the site's grid; published within hours | Backfill at about 2 s a day, then daily |
+| ~~2016 → 5 days ago~~ | ~~ERA5 / ERA5T (Copernicus)~~ | Dropped: the request queue made it impractical. January and February 2016 were built and remain in the bucket, unused | |
 
 All three are converted to the same 1° grid and the same field ids (`prmsl`, `t2m`, `tmax`, `precip`, `snow_frac`…). The front end decodes them the same way.
 

@@ -10,3 +10,6 @@ BRIEF.md
 .wrangler/
 data/era5*
 writeup/
+data/ncep*
+data/gfs*
+data/manifest-before*

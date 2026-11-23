@@ -274,7 +274,7 @@ def update_source(source: str, meta: dict, map_fields: list[dict], detail_fields
             src["ranges"] = merge_ranges(src.get("ranges", []), *add)
         sources[source] = src
         # When sources overlap, the first listed wins (newest data first).
-        manifest["priority"] = [k for k in ("gfs", "era5", "20cr") if k in sources]
+        manifest["priority"] = [k for k in ("ncep", "gfs", "era5", "20cr") if k in sources]
         manifest["built"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         save_manifest(manifest)
 
